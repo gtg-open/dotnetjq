@@ -1,0 +1,19 @@
+# Expanded corresponding source required under aot-source/ in every NativeAOT
+# RID package. Directories are validated recursively, excluding build outputs.
+COPYING
+COPYING.LIB
+COPYING.jq
+Directory.Build.props
+dotnet-tools.json
+LICENSE.DotNetJq
+LICENSES.md
+README.md
+THIRD_PARTY_NOTICES.md
+THIRD_PARTY_LICENSES
+global.json
+porting/AOT_RELINKING.md
+porting/PORTING_MANIFEST.json
+src/DotNetJq.Cli
+src/DotNetJq
+src/DotNetJq.GlibcCompat
+tools/aot-compliance

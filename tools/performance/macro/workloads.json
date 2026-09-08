@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "dataset_sha256_manifest": "dataset-sha256.json",
+  "scale": {
+    "default": "1",
+    "smoke": "0.01",
+    "rounding": "max(1,floor(base_count*scale+0.5))"
+  },
+  "datasets": {
+    "records": {"path": "records.json", "base_count": 100000},
+    "numbers": {"path": "numbers.json", "base_count": 250000},
+    "strings": {"path": "strings.json", "base_count": 80000},
+    "regex": {"path": "regex.json", "base_count": 60000},
+    "tree": {"path": "tree.json", "base_count": 97656},
+    "ndjson": {"path": "records.ndjson", "base_count": 150000},
+    "raw": {"path": "raw.txt", "base_count": 200000},
+    "stream": {"path": "stream.json", "base_count": 50000}
+  },
+  "scenarios": [
+    {
+      "id": "00",
+      "name": "startup",
+      "dataset": null,
+      "args": ["-M", "-n", "-c"],
+      "filter": "null"
+    },
+    {
+      "id": "01",
+      "name": "parse-small-output",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": ".items | length"
+    },
+    {
+      "id": "02",
+      "name": "identity-parse-serialize",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": "."
+    },
+    {
+      "id": "03",
+      "name": "projection",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": ".items | map(.payload.metrics.score) | add"
+    },
+    {
+      "id": "04",
+      "name": "map-arithmetic",
+      "dataset": "numbers",
+      "args": ["-M", "-c"],
+      "filter": ".numbers | map((. * 17 + 3) % 100003) | add"
+    },
+    {
+      "id": "05",
+      "name": "select",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": ".items | map(select(.active and (.score >= 50000))) | length"
+    },
+    {
+      "id": "06",
+      "name": "sort",
+      "dataset": "numbers",
+      "args": ["-M", "-c"],
+      "filter": ".numbers | sort | [.[0], .[-1], length]"
+    },
+    {
+      "id": "07",
+      "name": "sort-by",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": ".items | sort_by(.score, .id) | [.[0].id, .[-1].id, length]"
+    },
+    {
+      "id": "08",
+      "name": "group-by",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": ".items | group_by(.category) | map({category: .[0].category, count: length, sum: (map(.value) | add)})"
+    },
+    {
+      "id": "09",
+      "name": "unique",
+      "dataset": "numbers",
+      "args": ["-M", "-c"],
+      "filter": ".numbers | unique | length"
+    },
+    {
+      "id": "10",
+      "name": "reduce",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": "reduce .items[] as $x (0; . + ($x.value * 3))"
+    },
+    {
+      "id": "11",
+      "name": "recurse",
+      "dataset": "tree",
+      "args": ["-M", "-c"],
+      "filter": "[recurse(.children[]?) | .value] | add"
+    },
+    {
+      "id": "12",
+      "name": "construct-update",
+      "dataset": "records",
+      "args": ["-M", "-c"],
+      "filter": ".items | map({id, label:(.owner.name + \"-\" + (.id|tostring)), payload:{score:.score, active:.active}} | .payload.score += 7 | .payload.tier = (if .payload.score >= 50000 then \"high\" else \"low\" end)) | map(.payload.score + (.label|length) + (.payload.tier|length)) | add"
+    },
+    {
+      "id": "13",
+      "name": "strings",
+      "dataset": "strings",
+      "args": ["-M", "-c"],
+      "filter": ".strings | map(ascii_downcase | gsub(\"[[:space:][:punct:]]+\"; \"_\") | split(\"_\") | map(select(length>0)) | join(\"-\") | length) | add"
+    },
+    {
+      "id": "14",
+      "name": "base64",
+      "dataset": "strings",
+      "args": ["-M", "-c"],
+      "filter": ".strings | map(@base64 | @base64d | length) | add"
+    },
+    {
+      "id": "15",
+      "name": "regex-test",
+      "dataset": "regex",
+      "args": ["-M", "-c"],
+      "filter": ".testStrings | map(select(test(\"^(?:usr|svc)-[[:alnum:]_]{6,24}@[[:alpha:]]+\\\\.(?:com|net)$\"; \"i\"))) | length"
+    },
+    {
+      "id": "16",
+      "name": "regex-capture",
+      "dataset": "regex",
+      "args": ["-M", "-c"],
+      "filter": ".captureStrings | map(capture(\"^(?<kind>[[:alpha:]]+)-(?<id>[0-9]{6})-(?<zone>[[:upper:]]{2})$\") | ((.kind|length)+(.id|length)+(.zone|length))) | add"
+    },
+    {
+      "id": "17",
+      "name": "regex-gsub",
+      "dataset": "regex",
+      "args": ["-M", "-c"],
+      "filter": ".replaceStrings | map(gsub(\"(?<word>[[:alpha:]]+)(?<digits>[0-9]+)\"; \"\\\\(.word|ascii_upcase)-\\\\(.digits)\"; \"g\") | length) | add"
+    },
+    {
+      "id": "18",
+      "name": "json-slurp",
+      "dataset": "ndjson",
+      "args": ["-M", "-c", "-s"],
+      "filter": "map(.value) | add"
+    },
+    {
+      "id": "19",
+      "name": "raw-line-input-output",
+      "dataset": "raw",
+      "args": ["-M", "-R", "-r"],
+      "filter": "select(startswith(\"keep:\")) | ltrimstr(\"keep:\") | ascii_upcase"
+    },
+    {
+      "id": "20",
+      "name": "streaming",
+      "dataset": "stream",
+      "args": ["-M", "-c", "--stream"],
+      "filter": "reduce (., inputs) as $e (0; if (($e|length)==2 and ($e[1]|type)==\"number\") then . + $e[1] else . end)"
+    }
+  ]
+}

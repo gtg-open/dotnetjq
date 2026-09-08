@@ -1,0 +1,7 @@
+# Every binary archive and RID-specific NuGet package must contain these paths.
+COPYING
+COPYING.LIB
+LICENSE.DotNetJq
+LICENSES.md
+THIRD_PARTY_NOTICES.md
+THIRD_PARTY_LICENSES
