@@ -1,0 +1,10 @@
+bin/
+obj/
+TestResults/
+.vs/
+__pycache__/
+*.py[cod]
+*.user
+*.suo
+artifacts/
+upstream/jq

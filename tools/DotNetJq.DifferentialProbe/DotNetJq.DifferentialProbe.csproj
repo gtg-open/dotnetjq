@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>DotNetJq.DifferentialProbe</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/DotNetJq/DotNetJq.csproj" />
+    <ProjectReference Include="../../src/DotNetJq.GlibcCompat/DotNetJq.GlibcCompat.csproj" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

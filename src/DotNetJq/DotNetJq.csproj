@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>DotNetJq</RootNamespace>
+    <AssemblyName>DotNetJq</AssemblyName>
+    <!-- NuGet package IDs are case-insensitive. Keep the library distinct from
+         the dotnetjq CLI tool package while preserving the public assembly/API. -->
+    <PackageId>DotNetJq.Library</PackageId>
+    <!-- Package identity is supplied by the publisher at pack time. The pack
+         guard below rejects the SDK's assembly-name Authors default. -->
+    <RepositoryType>git</RepositoryType>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageLicenseFile>LICENSES.md</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>Managed jq 1.8.2 compatibility library. Includes a separately replaceable LGPL-2.1-or-later gamma compatibility assembly; see LICENSES.md.</Description>
+    <!-- GlibcCompat ships as a second lib/net10.0 assembly in this same package. -->
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <!-- NU5128 expects a dependency group even when this intentional package has none. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeGlibcCompatBuildOutput</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../DotNetJq.GlibcCompat/DotNetJq.GlibcCompat.csproj" />
+    <EmbeddedResource Include="Resources/builtin.jq" />
+    <None Include="../../COPYING" Pack="true" PackagePath="/" />
+    <None Include="../../COPYING.LIB" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSE.DotNetJq" Pack="true" PackagePath="/" />
+    <None Include="../../LICENSES.md" Pack="true" PackagePath="/" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../THIRD_PARTY_NOTICES.md" Pack="true" PackagePath="/" />
+    <None Include="../../THIRD_PARTY_LICENSES/**/*"
+          Pack="true"
+          PackagePath="THIRD_PARTY_LICENSES/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="../../Directory.Build.props" Pack="true" PackagePath="lgpl-source/" />
+    <None Include="../../global.json" Pack="true" PackagePath="lgpl-source/" />
+    <None Include="../DotNetJq.GlibcCompat/**/*"
+          Exclude="../DotNetJq.GlibcCompat/bin/**/*;../DotNetJq.GlibcCompat/obj/**/*"
+          Pack="true"
+          PackagePath="lgpl-source/src/DotNetJq.GlibcCompat/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <Target Name="IncludeGlibcCompatBuildOutput" DependsOnTargets="Build">
+    <ItemGroup>
+      <BuildOutputInPackage Include="$(TargetDir)DotNetJq.GlibcCompat.dll" />
+      <BuildOutputInPackage Include="$(TargetDir)DotNetJq.GlibcCompat.xml" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="RequireExplicitNuGetIdentity" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(Authors)' == '' Or '$(Authors)' == '$(AssemblyName)'"
+           Text="Packing DotNetJq.Library requires an explicit Authors property." />
+    <Error Condition="'$(RepositoryUrl)' == ''"
+           Text="Packing DotNetJq.Library requires an explicit RepositoryUrl property." />
+    <Error Condition="'$(RepositoryType)' != 'git'"
+           Text="Packing DotNetJq.Library requires RepositoryType=git." />
+  </Target>
+</Project>

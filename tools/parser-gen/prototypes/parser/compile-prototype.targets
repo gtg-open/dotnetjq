@@ -1,0 +1,15 @@
+<Project>
+  <!--
+    Imported only by validate.py through CustomAfterMicrosoftCommonTargets.
+    It adds only the behavioral smoke entry point. The maintained grammar,
+    generated parser, adapter, and internal runtime compile as production
+    DotNetJq sources through the SDK's normal default items.
+  -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'DotNetJq'">
+    <!-- Executable-only smoke properties must not leak into GlibcCompat. -->
+    <ProjectReference Update="@(ProjectReference)"
+                      GlobalPropertiesToRemove="OutputType;StartupObject;RunJqGeneratedParserSmoke" />
+    <Compile Include="$(MSBuildThisFileDirectory)ManagedParserSmoke.cs"
+             Condition="'$(RunJqGeneratedParserSmoke)' == 'true'" />
+  </ItemGroup>
+</Project>

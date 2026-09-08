@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: __PACKAGE_ID__
+PackageVersion: __VERSION__
+PackageLocale: en-US
+Publisher: __PUBLISHER__
+PackageName: DotNetJq
+PackageUrl: __REPOSITORY_URL__
+License: Multiple licenses; see LICENSES.md
+LicenseUrl: __LICENSE_URL__
+ShortDescription: jq 1.8.2-compatible command-line JSON processor for .NET and NativeAOT.
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

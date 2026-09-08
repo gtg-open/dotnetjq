@@ -1,0 +1,49 @@
+name: Bug report
+description: Report incorrect DotNetJq behavior that is not a security vulnerability
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not report security vulnerabilities here. Use the private process in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: DotNetJq version and distribution
+      placeholder: 1.0.0, DotNetJq.Library / dotnetjq / RID archive
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, RID, and .NET version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal filter, input, and command or C# code
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual exit status, output, error, or exception
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected jq 1.8.2 behavior
+      description: Include how you established the expected result.
+    validations:
+      required: true
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security confirmation
+      options:
+        - label: This report does not disclose a security vulnerability.
+          required: true

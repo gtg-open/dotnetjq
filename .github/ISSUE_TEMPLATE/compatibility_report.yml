@@ -1,0 +1,35 @@
+name: jq compatibility report
+description: Report a difference from jq 1.8.2
+title: "[Compatibility]: "
+labels: [compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: Compare with jq 1.8.2 specifically. Do not file security vulnerabilities publicly.
+  - type: textarea
+    id: filter_input
+    attributes:
+      label: Minimal filter and input
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: native
+    attributes:
+      label: jq 1.8.2 command, exit status, stdout, and stderr
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: managed
+    attributes:
+      label: DotNetJq command or code, exit status/result, and diagnostics
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: DotNetJq version, distribution, OS/RID, and .NET version
+    validations:
+      required: true

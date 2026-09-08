@@ -1,0 +1,65 @@
+# Prebuilt NativeAOT formula for the project's custom tap; not homebrew/core.
+class Dotnetjq < Formula
+  desc "jq 1.8.2-compatible command-line JSON processor"
+  homepage "__REPOSITORY_URL__"
+  version "__VERSION__"
+  # The NativeAOT executable includes the .NET runtime's complete third-party
+  # notice set in addition to DotNetJq's mixed-license components. Homebrew's
+  # SPDX expression cannot represent that complete per-file boundary.
+  license :cannot_represent
+
+  on_macos do
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "__OSX_ARM64_URL__"
+      sha256 "__OSX_ARM64_SHA256__"
+    elsif Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
+      url "__OSX_X64_URL__"
+      sha256 "__OSX_X64_SHA256__"
+    else
+      odie "dotnetjq supports only 64-bit ARM and Intel hosts"
+    end
+  end
+
+  on_linux do
+    # The prebuilt glibc archive has an Ubuntu 24.04 / glibc 2.39 baseline.
+    # Hosts with an older libc must use a different distribution mechanism.
+    depends_on "icu4c@78"
+
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "__LINUX_ARM64_URL__"
+      sha256 "__LINUX_ARM64_SHA256__"
+    elsif Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
+      url "__LINUX_X64_URL__"
+      sha256 "__LINUX_X64_SHA256__"
+    else
+      odie "dotnetjq supports only 64-bit ARM and Intel hosts"
+    end
+  end
+
+  resource "corresponding_source" do
+    url "__AOT_SOURCE_URL__"
+    sha256 "__AOT_SOURCE_SHA256__"
+  end
+
+  def install
+    if OS.linux?
+      # icu4c@78 is keg-only. Keep the executable itself unmodified under
+      # libexec and expose the dependency only to this command's loader.
+      libexec.install "dotnetjq"
+      (bin/"dotnetjq").write_env_script libexec/"dotnetjq",
+                                               LD_LIBRARY_PATH: Formula["icu4c@78"].opt_lib
+    else
+      bin.install "dotnetjq"
+    end
+    pkgshare.install "COPYING", "COPYING.LIB", "LICENSE.DotNetJq", "LICENSES.md",
+                     "THIRD_PARTY_NOTICES.md", "LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"
+    pkgshare.install "THIRD_PARTY_LICENSES"
+    resource("corresponding_source").stage do
+      (pkgshare/"aot-source").install Dir["*"]
+    end
+  end
+
+  test do
+    assert_equal "2\n", pipe_output("#{bin}/dotnetjq '. + 1'", "1\n")
+  end
+end

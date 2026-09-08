@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+# Preserve byte-stable third-party/generated parser output. These files retain
+# upstream generator whitespace and are checked by deterministic regeneration.
+src/DotNetJq/Compatibility/ParserGenerator/GppgRuntime/*.cs whitespace=-trailing-space
+src/DotNetJq/Generated/Parser/*.cs whitespace=-trailing-space

@@ -1,0 +1,100 @@
+name: Same-runner performance verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: Same-runner performance regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: gtg-open/dotnetjq
+          ref: 0ceaaaadc5582dac77491de183b6a8f1104adbf8
+          path: artifacts/performance-baseline
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Install native prerequisites and pinned jq oracle
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang file zlib1g-dev
+          bash tools/release/provision-jq-1.8.2-test-assets.sh \
+            --rid linux-x64 --destination "$PWD/artifacts/test-assets/jq-1.8.2" \
+            --github-env "$GITHUB_ENV"
+      - name: Build and attest the reviewed baseline in this job
+        shell: bash
+        run: python3 -B tools/performance/paired_baseline.py --build "$PWD/artifacts/performance-baseline"
+      - name: Measure all 879 fixtures with baseline and candidate interleaved
+        shell: bash
+        run: >-
+          env DOTNETJQ_PERFORMANCE_UPSTREAM="$DOTNETJQ_UPSTREAM"
+          bash tools/performance/run.sh
+          --baseline-root "$PWD/artifacts/performance-baseline"
+          --native-executable "$DOTNETJQ_JQ182"
+          --upstream "$DOTNETJQ_UPSTREAM"
+          --repetitions 3 --warmups 1 --startup-repetitions 300
+      - name: Measure all 21 workloads with baseline and candidate interleaved
+        shell: bash
+        run: >-
+          env -u LD_PRELOAD python3 -B tools/performance/macro_benchmark.py
+          --baseline-root "$PWD/artifacts/performance-baseline"
+          --native-executable "$DOTNETJQ_JQ182"
+          --upstream "$DOTNETJQ_UPSTREAM"
+          --scale 0.1 --repetitions 3 --warmups 1 --regenerate --publishable
+      - name: Reject regressions against the same-runner baseline
+        shell: bash
+        run: >-
+          python3 -B tools/performance/check_release_gate.py
+          --fixture-results artifacts/performance/results/results.json
+          --macro-results artifacts/performance/macro-results/results.json
+          --thresholds tools/performance/release-thresholds.json
+      - name: Inspect selected artifact outputs for private data
+        id: privacy-artifacts-1
+        if: always() && steps.privacy-source.outcome == 'success'
+        shell: bash
+        run: |
+          privacy_outputs=()
+          for path in 'artifacts/performance/results' 'artifacts/performance/macro-results'; do
+            if [[ -e "$path" || -L "$path" ]]; then
+              privacy_outputs+=(--output "$path")
+            fi
+          done
+          python3 -B tools/privacy/check.py --metadata --github-hosted "${privacy_outputs[@]}"
+      - name: Preserve complete evidence or failure diagnostics
+        if: always() && steps.privacy-artifacts-1.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: same-runner-performance-evidence
+          path: |
+            artifacts/performance/results
+            artifacts/performance/macro-results
+          if-no-files-found: warn
+          # Retain .dotnetjq-report-status.json for downloaded report verification.
+          include-hidden-files: true
+          retention-days: 14

@@ -1,0 +1,146 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>DotNetJq.Cli</RootNamespace>
+    <AssemblyName>DotNetJq.Cli</AssemblyName>
+    <PackageId>dotnetjq</PackageId>
+    <!-- Package identity is supplied by the publisher at pack time. The pack
+         guard below rejects the SDK's assembly-name Authors default. -->
+    <RepositoryType>git</RepositoryType>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnetjq</ToolCommandName>
+    <PublishAot>true</PublishAot>
+    <ToolPackageRuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;linux-musl-x64;linux-musl-arm64;osx-x64;osx-arm64</ToolPackageRuntimeIdentifiers>
+    <PackageLicenseFile>LICENSES.md</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Description>jq 1.8.2-compatible command-line processor backed by DotNetJq.</Description>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(PublishAot)' == 'true' and '$(RuntimeIdentifier)' != ''">
+    <!-- The archive builder uses the same no-sidecar release image. Keeping
+         these properties in the project makes RID nupkg output identical even
+         when `dotnet pack` is invoked outside the repository workflow. -->
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>none</DebugType>
+    <RuntimeFrameworkVersion>10.0.11</RuntimeFrameworkVersion>
+  </PropertyGroup>
+  <!-- Deterministic C# compilation does not make the external native linker
+       deterministic. Keep these options in the project so dotnet pack,
+       standalone archives, and corresponding-source rebuilds agree.
+       Windows otherwise embeds wall-clock COFF/debug-directory timestamps.
+       macOS otherwise hashes a temporary-path/timestamp-bearing debug map
+       before the SDK's later strip step; omit that map for no-debug releases
+       while retaining the content-derived UUID and normal code signature. -->
+  <ItemGroup Condition="'$(PublishAot)' == 'true' and '$(Deterministic)' == 'true'">
+    <LinkerArg Include="/Brepro" Condition="$(RuntimeIdentifier.StartsWith('win-'))" />
+    <LinkerArg Include="-Wl,-reproducible" Condition="$(RuntimeIdentifier.StartsWith('osx-'))" />
+    <LinkerArg Include="-Wl,-S" Condition="$(RuntimeIdentifier.StartsWith('osx-')) and '$(DebugType)' == 'none'" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../DotNetJq/DotNetJq.csproj" />
+
+    <!-- Every binary tool package carries its notices at the package root. -->
+    <Content Include="../../COPYING" Pack="true" PackagePath="/" />
+    <Content Include="../../COPYING.LIB" Pack="true" PackagePath="/" />
+    <Content Include="../../LICENSE.DotNetJq" Pack="true" PackagePath="/" />
+    <Content Include="../../LICENSES.md" Pack="true" PackagePath="/" />
+    <Content Include="../../README.md" Pack="true" PackagePath="/" />
+    <Content Include="../../THIRD_PARTY_NOTICES.md" Pack="true" PackagePath="/" />
+    <Content Include="../../THIRD_PARTY_LICENSES/**/*"
+             Pack="true"
+             PackagePath="THIRD_PARTY_LICENSES/%(RecursiveDir)%(Filename)%(Extension)" />
+
+    <!-- NativeAOT statically incorporates the LGPL-derived compatibility code.
+         Keep complete, directly rebuildable corresponding source inside every
+         pointer/RID package instead of relying on an external checkout. -->
+    <None Include="../../COPYING;../../COPYING.LIB;../../COPYING.jq;../../Directory.Build.props;../../LICENSE.DotNetJq;../../LICENSES.md;../../README.md;../../THIRD_PARTY_NOTICES.md;../../dotnet-tools.json;../../global.json"
+          Pack="true"
+          PackagePath="aot-source/" />
+    <None Include="../../THIRD_PARTY_LICENSES/**/*"
+          Pack="true"
+          PackagePath="aot-source/THIRD_PARTY_LICENSES/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="../../porting/AOT_RELINKING.md;../../porting/PORTING_MANIFEST.json"
+          Pack="true"
+          PackagePath="aot-source/porting/" />
+    <None Include="../../tools/aot-compliance/**/*"
+          Pack="true"
+          PackagePath="aot-source/tools/aot-compliance/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="**/*"
+          Exclude="bin/**/*;obj/**/*"
+          Pack="true"
+          PackagePath="aot-source/src/DotNetJq.Cli/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="../DotNetJq/**/*"
+          Exclude="../DotNetJq/bin/**/*;../DotNetJq/obj/**/*"
+          Pack="true"
+          PackagePath="aot-source/src/DotNetJq/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="../DotNetJq.GlibcCompat/**/*"
+          Exclude="../DotNetJq.GlibcCompat/bin/**/*;../DotNetJq.GlibcCompat/obj/**/*"
+          Pack="true"
+          PackagePath="aot-source/src/DotNetJq.GlibcCompat/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- NativeAOT statically links code from the RID-specific runtime pack. Resolve
+       the exact pack selected by the SDK and carry its own license/notices beside
+       the executable. The PackTool target packages the completed PublishDir, so
+       this also places the files under tools/any/<rid>/ in each RID nupkg. -->
+  <Target Name="ResolveNativeAotRuntimeLicenseFiles"
+          DependsOnTargets="ResolveFrameworkReferences;ImportRuntimeIlcPackageTarget"
+          Condition="'$(PublishAot)' == 'true' and '$(RuntimeIdentifier)' != ''">
+    <Error Condition="'$(RuntimePackagePath)' == ''"
+           Text="The resolved NativeAOT RuntimePackagePath is empty for $(RuntimeIdentifier)." />
+    <ItemGroup>
+      <_ResolvedNativeAotRuntimeLicenseFile Include="$([MSBuild]::NormalizePath('$(RuntimePackagePath)', 'LICENSE.TXT'))" />
+      <_ResolvedNativeAotRuntimeLicenseFile Include="$([MSBuild]::NormalizePath('$(RuntimePackagePath)', 'THIRD-PARTY-NOTICES.TXT'))" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_ResolvedNativeAotRuntimeLicenseFile.Identity)')"
+           Text="The resolved NativeAOT runtime pack is missing %(_ResolvedNativeAotRuntimeLicenseFile.Filename)%(_ResolvedNativeAotRuntimeLicenseFile.Extension): %(_ResolvedNativeAotRuntimeLicenseFile.Identity)" />
+  </Target>
+
+  <Target Name="InjectNativeAotRuntimeLicensesIntoPublish"
+          AfterTargets="Publish"
+          DependsOnTargets="ResolveNativeAotRuntimeLicenseFiles"
+          Condition="'$(PublishAot)' == 'true' and '$(RuntimeIdentifier)' != ''">
+    <Copy SourceFiles="@(_ResolvedNativeAotRuntimeLicenseFile)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- PackAsTool consumes PublishDir wholesale. NativeAOT diagnostics and
+       referenced-project XML/PDB files are not part of the executable release
+       contract, so remove them before the RID package is assembled. -->
+  <Target Name="RemoveNativeAotToolSidecars"
+          BeforeTargets="PackTool"
+          Condition="'$(PublishAot)' == 'true' and '$(RuntimeIdentifier)' != ''">
+    <ItemGroup>
+      <_NativeAotToolSidecar Include="$(PublishDir)*.dbg;$(PublishDir)*.pdb;$(PublishDir)*.xml" />
+    </ItemGroup>
+    <Delete Files="@(_NativeAotToolSidecar)" />
+    <!-- The NativeAOT SDK invokes dsymutil on macOS even with DebugType=none.
+         Its directory sidecar is not matched by the file-only Delete above. -->
+    <RemoveDir Directories="$(PublishDir)$(AssemblyName).dSYM"
+               Condition="'$(DebugType)' == 'none' and $(RuntimeIdentifier.StartsWith('osx-'))" />
+  </Target>
+
+  <!-- Release verification calls this target independently and receives the
+       exact source paths selected by the same SDK resolution used for publish. -->
+  <Target Name="WriteResolvedNativeAotRuntimeLicenseManifest"
+          DependsOnTargets="ResolveNativeAotRuntimeLicenseFiles"
+          Condition="'$(PublishAot)' == 'true' and '$(RuntimeIdentifier)' != ''">
+    <Error Condition="'$(NativeAotRuntimeLicenseManifestPath)' == ''"
+           Text="NativeAotRuntimeLicenseManifestPath is required." />
+    <WriteLinesToFile File="$(NativeAotRuntimeLicenseManifestPath)"
+                      Lines="@(_ResolvedNativeAotRuntimeLicenseFile)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="RequireExplicitNuGetIdentity" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(Authors)' == '' Or '$(Authors)' == '$(AssemblyName)'"
+           Text="Packing dotnetjq requires an explicit Authors property." />
+    <Error Condition="'$(RepositoryUrl)' == ''"
+           Text="Packing dotnetjq requires an explicit RepositoryUrl property." />
+    <Error Condition="'$(RepositoryType)' != 'git'"
+           Text="Packing dotnetjq requires RepositoryType=git." />
+  </Target>
+</Project>
