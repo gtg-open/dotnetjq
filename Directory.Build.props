@@ -1,0 +1,70 @@
+<Project>
+  <PropertyGroup>
+    <!-- Public product identity. A release tag must match DotNetJqVersion;
+         jq compatibility advances independently and is always stated. -->
+    <DotNetJqVersion>1.0.0</DotNetJqVersion>
+    <JqCompatibilityVersion>1.8.2</JqCompatibilityVersion>
+    <JqCompatibilityCommit>34f7186b86743a083a589741b6cea95293524108</JqCompatibilityCommit>
+    <Authors>GtG Open Maintainer</Authors>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/gtg-open/dotnetjq</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/gtg-open/dotnetjq</PackageProjectUrl>
+
+    <!-- Command-line -p:Version remains authoritative for prerelease builds.
+         Ordinary source builds use the repository's declared release line. -->
+    <VersionPrefix>$(DotNetJqVersion)</VersionPrefix>
+    <Version Condition="'$(Version)' == ''">$(DotNetJqVersion)</Version>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">$(Version)</PackageVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+
+    <!-- CI supplies these through DOTNETJQ_BUILD_NUMBER and
+         DOTNETJQ_SOURCE_REVISION. Build metadata never changes the NuGet
+         package version or the user-facing version-command value. -->
+    <DotNetJqBuildNumber Condition="'$(DotNetJqBuildNumber)' == '' and '$(DOTNETJQ_BUILD_NUMBER)' != ''">$(DOTNETJQ_BUILD_NUMBER)</DotNetJqBuildNumber>
+    <DotNetJqBuildNumber Condition="'$(DotNetJqBuildNumber)' == ''">0</DotNetJqBuildNumber>
+    <DotNetJqSourceRevision Condition="'$(DotNetJqSourceRevision)' == '' and '$(DOTNETJQ_SOURCE_REVISION)' != ''">$(DOTNETJQ_SOURCE_REVISION)</DotNetJqSourceRevision>
+    <FileVersion>$(DotNetJqVersion).$(DotNetJqBuildNumber)</FileVersion>
+    <InformationalVersion>$(Version)+jq.$(JqCompatibilityVersion).build.$(DotNetJqBuildNumber)</InformationalVersion>
+    <InformationalVersion Condition="'$(DotNetJqSourceRevision)' != ''">$(Version)+jq.$(JqCompatibilityVersion).build.$(DotNetJqBuildNumber).sha.$(DotNetJqSourceRevision)</InformationalVersion>
+    <RepositoryCommit Condition="'$(DotNetJqSourceRevision)' != ''">$(DotNetJqSourceRevision)</RepositoryCommit>
+
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <!-- Keep portable-PDB document paths and the PE CodeView path independent
+         of the checkout location.  This is also required for byte-identical
+         corresponding-source rebuilds from an extracted release archive. -->
+    <PathMap>$(MSBuildThisFileDirectory)=/_/;$(PathMap)</PathMap>
+    <!-- Release/source identity is recorded by the porting manifest, package
+         metadata, checksums, and CI attestations. Do not let the presence of a
+         .git directory append checkout-only bytes to otherwise reproducible
+         managed or NativeAOT outputs. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Compiler warnings fail the build; analyzer recommendations remain visible during the traceable port. -->
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- jq/libjq source traceability intentionally retains lowercase C symbol names. -->
+    <NoWarn>$(NoWarn);CS8981;CA1014;CA1712</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="JqCompatibilityVersion" Value="$(JqCompatibilityVersion)" />
+    <AssemblyMetadata Include="JqCompatibilityCommit" Value="$(JqCompatibilityCommit)" />
+    <AssemblyMetadata Include="DotNetJqBuildNumber" Value="$(DotNetJqBuildNumber)" />
+    <AssemblyMetadata Include="DotNetJqSourceRevision"
+                      Value="$(DotNetJqSourceRevision)"
+                      Condition="'$(DotNetJqSourceRevision)' != ''" />
+  </ItemGroup>
+
+  <Target Name="ValidateDotNetJqVersionMetadata" BeforeTargets="GenerateAssemblyInfo">
+    <Error Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(DotNetJqBuildNumber)', '^(0|[1-9][0-9]{0,4})$')) != 'true'"
+           Text="DotNetJqBuildNumber must be an integer from 0 through 99999." />
+    <Error Condition="$([System.Int32]::Parse('$(DotNetJqBuildNumber)')) &gt; 65535"
+           Text="DotNetJqBuildNumber must fit in the fourth FileVersion component (0 through 65535)." />
+    <Error Condition="'$(DotNetJqSourceRevision)' != '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(DotNetJqSourceRevision)', '^[0-9a-f]{40}$')) != 'true'"
+           Text="DotNetJqSourceRevision must be a lowercase full 40-character Git commit SHA." />
+  </Target>
+</Project>

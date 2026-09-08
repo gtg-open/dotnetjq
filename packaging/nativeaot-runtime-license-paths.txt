@@ -1,0 +1,4 @@
+# Files copied byte-for-byte from the exact resolved
+# Microsoft.NETCore.App.Runtime.NativeAOT.<rid> package.
+LICENSE.TXT
+THIRD-PARTY-NOTICES.TXT

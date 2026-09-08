@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: __PACKAGE_ID__
+PackageVersion: __VERSION__
+InstallerType: zip
+Installers:
+  - Architecture: x64
+    InstallerUrl: __WIN_X64_URL__
+    InstallerSha256: __WIN_X64_SHA256__
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: dotnetjq.exe
+        PortableCommandAlias: dotnetjq
+  - Architecture: arm64
+    InstallerUrl: __WIN_ARM64_URL__
+    InstallerSha256: __WIN_ARM64_SHA256__
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: dotnetjq.exe
+        PortableCommandAlias: dotnetjq
+ManifestType: installer
+ManifestVersion: 1.10.0

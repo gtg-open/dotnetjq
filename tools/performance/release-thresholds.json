@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "measured_utc": "2026-09-06",
+    "report": "porting/PERFORMANCE_COMPARISON.md",
+    "fixture_mean_vs_native": {
+      "aot-dotnetjq": 6.200457375570222,
+      "framework-dotnetjq": 75.63060920927883
+    },
+    "startup_median_vs_native": {
+      "aot-dotnetjq": 4.872852022811574,
+      "framework-dotnetjq": 60.596209591981385
+    },
+    "macro_processing_geomean_vs_native": {
+      "aot-dotnetjq": 5.819038145984616,
+      "framework-dotnetjq": 19.362675733406004
+    }
+  },
+  "maximum_release_ratios": {
+    "fixture_mean_vs_native": {
+      "aot-dotnetjq": 8.3,
+      "framework-dotnetjq": 102.5
+    },
+    "startup_median_vs_native": {
+      "aot-dotnetjq": 6.5,
+      "framework-dotnetjq": 80.0
+    },
+    "macro_processing_geomean_vs_native": {
+      "aot-dotnetjq": 7.9,
+      "framework-dotnetjq": 26.5
+    }
+  }
+}

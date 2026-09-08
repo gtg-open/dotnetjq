@@ -1,0 +1,55 @@
+name: Parser generation check
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  generated-parser-is-current:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Fetch pinned jq grammar
+        run: |
+          mkdir -p upstream
+          git clone --filter=blob:none --no-checkout https://github.com/jqlang/jq.git upstream/jq
+          git -C upstream/jq checkout 34f7186b86743a083a589741b6cea95293524108
+      - name: Restore pinned managed grammar tools and type-check project
+        run: |
+          dotnet tool restore
+          dotnet restore src/DotNetJq/DotNetJq.csproj
+      - name: Exercise parser guardrail mutation tests
+        run: |
+          dotnet run --configuration Release \
+            --project tools/parser-gen/DotNetJq.ParserGen/DotNetJq.ParserGen.csproj -- \
+            self-test --gppg dotnet-gppg
+      - name: Verify deterministic generated lexer
+        run: tools/parser-gen/generate-gplex-lexer.sh --check
+      - name: Verify managed grammar structure and precedence guards
+        run: |
+          dotnet run --configuration Release \
+            --project tools/parser-gen/DotNetJq.ParserGen/DotNetJq.ParserGen.csproj -- \
+            validate \
+            --parser src/DotNetJq/Grammar/parser.y \
+            --lexer src/DotNetJq/Grammar/lexer.l
+      - name: Verify deterministic generated GPPG parser
+        run: |
+          dotnet run --configuration Release \
+            --project tools/parser-gen/DotNetJq.ParserGen/DotNetJq.ParserGen.csproj -- \
+            check-generated-parser \
+            --parser src/DotNetJq/Grammar/parser.y \
+            --output src/DotNetJq/Generated/Parser/JqGeneratedParser.g.cs
+      - name: Verify generated parser actions and diagnostics
+        run: python3 tools/parser-gen/prototypes/parser/validate.py --audit-upstream
+      - name: Verify deterministic generated artifacts
+        run: python3 tools/parser-gen/generate.py --check --upstream upstream/jq
+      - name: Verify source-traceability manifest
+        run: python3 tools/generate_manifest.py --check
+      - name: Verify generated parser in NativeAOT publication
+        run: tools/native-aot-smoke/verify.sh

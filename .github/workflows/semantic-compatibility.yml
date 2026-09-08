@@ -1,0 +1,66 @@
+name: Full semantic compatibility
+
+on:
+  pull_request:
+  push:
+    branches:
+      - '**'
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  DOTNETJQ_REQUIRE_FULL_COMPATIBILITY: 1
+  CLI_TEST_PROJECT: tests/DotNetJq.Cli.Tests/DotNetJq.Cli.Tests.csproj
+
+jobs:
+  semantic-compatibility:
+    name: jq 1.8.2 semantic release gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Install validation and NativeAOT prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            binutils bubblewrap clang gcc perl ripgrep unzip zip zlib1g-dev
+      - name: Provision exact jq source and official oracle
+        shell: bash
+        run: |
+          bash tools/release/provision-jq-1.8.2-test-assets.sh \
+            --rid linux-x64 \
+            --destination "$GITHUB_WORKSPACE/artifacts/test-assets/jq-1.8.2" \
+            --github-env "$GITHUB_ENV"
+          mkdir -p upstream
+          test ! -e upstream/jq && test ! -L upstream/jq
+          ln -s ../artifacts/test-assets/jq-1.8.2/upstream upstream/jq
+      - name: Run the complete semantic release gate
+        shell: bash
+        run: tools/verify-release.sh
+      - name: Select the managed CLI for the auditable TRX gate
+        shell: bash
+        run: |
+          subject="$PWD/src/DotNetJq.Cli/bin/Release/net10.0/DotNetJq.Cli"
+          test -x "$subject"
+          printf 'DOTNETJQ_CLI=%s\n' "$subject" >>"$GITHUB_ENV"
+      - name: Require a complete CLI TRX with zero skipped tests
+        shell: bash
+        run: |
+          mkdir -p artifacts/test-results
+          dotnet test "$CLI_TEST_PROJECT" \
+            --configuration Release --no-build --no-restore \
+            --results-directory artifacts/test-results \
+            --logger 'trx;LogFileName=semantic-cli.trx'
+          python tools/release/verify-trx-no-skips.py \
+            artifacts/test-results/semantic-cli.trx
