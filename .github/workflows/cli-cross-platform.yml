@@ -48,7 +48,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - name: Provision exact jq source and official oracle
@@ -128,7 +128,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - name: Build framework-dependent Windows CLI
@@ -181,7 +181,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - name: Install Linux NativeAOT prerequisites

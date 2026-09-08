@@ -90,7 +90,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - name: Check out the reviewed performance baseline source
@@ -263,7 +263,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - name: Resolve and validate package version
@@ -558,7 +558,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -804,7 +804,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         if: matrix.musl == false
         with:
           global-json-file: global.json
@@ -871,7 +871,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - name: Install bundle verification prerequisites
@@ -1081,7 +1081,7 @@ jobs:
         id: privacy-source
         shell: bash
         run: python3 -B tools/privacy/check.py --history
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
       - name: Install bundle verification prerequisites
