@@ -15,7 +15,7 @@ Compile/runtime diagnostic payloads were compared after removing only the native
 - Declared categories covered: `20` / `20`
 - Declared category filters covered: `437` / `437`
 - Declared JSON inputs covered: `48` / `48`
-- Oracle: official jq 1.8.2 release binary
+- Oracle: `<verified-pinned-oracle>`
 - Oracle version: `jq-1.8.2`
 - Oracle SHA-256: `b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f`
 - Per-oracle-case timeout: `2000 ms`
