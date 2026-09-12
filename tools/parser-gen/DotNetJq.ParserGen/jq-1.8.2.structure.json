@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "upstreamRepository": "https://github.com/jqlang/jq",
+  "upstreamRevision": "34f7186b86743a083a589741b6cea95293524108",
+  "parserSourcePath": "src/parser.y",
+  "lexerSourcePath": "src/lexer.l",
+  "expectedConflicts": 0,
+  "parserTokenEntries": 77,
+  "parserPrecedenceDeclarations": 14,
+  "parserProductionAlternatives": 167,
+  "parserExplicitEmptyAlternatives": 5,
+  "lexerStartConditions": 6,
+  "lexerRules": 53,
+  "parserStructuralSha256": "ca304a1fcb3c50ea637fdfb094c16bf97e79ff115d217e1c60ea928f4dc8eada",
+  "lexerStructuralSha256": "ec7e616da37c0dd1a483801725a30f19c28dfd6f3d362146ab77132f2a3e35bf"
+}

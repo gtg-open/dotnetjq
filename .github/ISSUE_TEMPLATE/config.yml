@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/gtg-open/dotnetjq/security/advisories/new
+    about: Report vulnerabilities privately; never open a public security issue.
+  - name: jq 1.8 language manual
+    url: https://jqlang.org/manual/v1.8/
+    about: Canonical jq syntax and builtin documentation.

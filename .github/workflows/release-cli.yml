@@ -1,0 +1,1557 @@
+name: Build, verify, and publish DotNetJq
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dotnetjq-release-publication
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  DOTNETJQ_REQUIRE_FULL_COMPATIBILITY: 1
+  DOTNETJQ_BUILD_NUMBER: ${{ github.run_number }}
+  DOTNETJQ_SOURCE_REVISION: ${{ github.sha }}
+  # The DOS epoch is the earliest timestamp representable by NuGet's ZIP format.
+  SOURCE_DATE_EPOCH: 315532800
+  RELEASE_AUTHORS: GtG Open Maintainer
+  NUGET_OWNER: gtg-open
+  WINGET_PUBLISHER: GtG Open
+  WINGET_PACKAGE_ID: GtGOpen.DotNetJq
+  CLI_PROJECT: src/DotNetJq.Cli/DotNetJq.Cli.csproj
+  CLI_TEST_PROJECT: tests/DotNetJq.Cli.Tests/DotNetJq.Cli.Tests.csproj
+  LIBRARY_PROJECT: src/DotNetJq/DotNetJq.csproj
+  # .NET SDK 10.0.400, Alpine 3.24 AOT multi-architecture manifest.
+  ALPINE_AOT_SDK_IMAGE: mcr.microsoft.com/dotnet/sdk@sha256:cd255a72d14d70260bb9b8dc493c3c37ce0877ef534f85ac1c931628364d7059
+  # .NET runtime-deps 10.0.11, Alpine 3.24 multi-architecture manifest.
+  ALPINE_RUNTIME_DEPS_IMAGE: mcr.microsoft.com/dotnet/runtime-deps@sha256:379b17d7d388a2a1b5330bfc2429a01091f85e255d3bce7981d65927d786c000
+
+jobs:
+  validate-tag:
+    name: Validate immutable release tag
+    if: github.event.deleted == false
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+      commit: ${{ steps.tag.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - name: Require a supported tag on main
+        id: tag
+        shell: bash
+        run: |
+          expected_commit=$(git rev-parse 'HEAD^{commit}')
+          bash tools/release/assert-release-tag.sh \
+            --tag "$GITHUB_REF_NAME" \
+            --expected-commit "$expected_commit" \
+            --github-output "$GITHUB_OUTPUT"
+
+  semantic-compatibility:
+    name: Verify jq 1.8.2 semantic compatibility
+    needs: validate-tag
+    uses: ./.github/workflows/semantic-compatibility.yml
+
+  performance-regression:
+    name: Reject material performance regressions
+    needs:
+      - validate-tag
+      - semantic-compatibility
+      - native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Check out the reviewed performance baseline source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: gtg-open/dotnetjq
+          ref: 0ceaaaadc5582dac77491de183b6a8f1104adbf8
+          path: artifacts/performance-baseline
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-input-linux-x64
+          path: artifacts/release-input-linux-x64
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/release-input-linux-x64
+      - name: Install Linux NativeAOT prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang file zlib1g-dev
+      - name: Provision exact jq source and official oracle
+        shell: bash
+        run: >-
+          bash tools/release/provision-jq-1.8.2-test-assets.sh
+          --rid linux-x64
+          --destination "$GITHUB_WORKSPACE/artifacts/test-assets/jq-1.8.2"
+          --github-env "$GITHUB_ENV"
+      - name: Bind the benchmark subjects to their exact producer inputs
+        shell: bash
+        run: |
+          version='${{ needs.validate-tag.outputs.version }}'
+          archive="$PWD/artifacts/release-input-linux-x64/release/dotnetjq-$version-linux-x64.tar.gz"
+          provenance="$archive.provenance.json"
+          release_directory="$RUNNER_TEMP/dotnetjq-linux-x64-release"
+          bash tools/release/verify-native-archive.sh \
+            --archive "$archive" --rid linux-x64 --version "$version" --execute
+          [ ! -e "$release_directory" ] || {
+            echo "Refusing a pre-existing performance extraction directory: $release_directory" >&2
+            exit 1
+          }
+          mkdir "$release_directory"
+          tar -xzf "$archive" -C "$release_directory"
+
+          snapshot="$RUNNER_TEMP/dotnetjq-framework-prebuild.json"
+          python3 -B tools/performance/build_attestation.py \
+            --root "$PWD" prepare-output --deployment framework-dotnetjq
+          python3 -B tools/performance/build_attestation.py \
+            --root "$PWD" snapshot --output "$snapshot"
+          framework_publish=(
+            dotnet publish src/DotNetJq.Cli/DotNetJq.Cli.csproj
+            --configuration Release
+            --runtime linux-x64
+            --self-contained false
+            --output artifacts/performance/framework
+            --artifacts-path artifacts/performance/build/framework
+            -p:PublishAot=false
+            -p:NuGetAudit=false
+            --nologo
+          )
+          "${framework_publish[@]}"
+          python3 -B tools/performance/build_attestation.py \
+            --root "$PWD" create --snapshot "$snapshot" \
+            --deployment framework-dotnetjq -- "${framework_publish[@]}"
+
+          {
+            printf 'DOTNETJQ_PERF_FRAMEWORK=%s\n' \
+              "$PWD/artifacts/performance/framework/DotNetJq.Cli"
+            printf 'DOTNETJQ_PERF_AOT=%s\n' "$release_directory/dotnetjq"
+            printf 'DOTNETJQ_PERF_ARCHIVE=%s\n' "$archive"
+            printf 'DOTNETJQ_PERF_PROVENANCE=%s\n' "$provenance"
+          } >>"$GITHUB_ENV"
+      - name: Build and attest the pinned baseline on this benchmark runner
+        shell: bash
+        run: python3 -B tools/performance/paired_baseline.py --build "$PWD/artifacts/performance-baseline"
+      - name: Measure all 879 official fixture scenarios
+        shell: bash
+        run: >-
+          env DOTNETJQ_PERFORMANCE_UPSTREAM="$DOTNETJQ_UPSTREAM"
+          bash tools/performance/run.sh
+          --external-framework-executable "$DOTNETJQ_PERF_FRAMEWORK"
+          --external-aot-executable "$DOTNETJQ_PERF_AOT"
+          --external-aot-archive "$DOTNETJQ_PERF_ARCHIVE"
+          --external-aot-provenance "$DOTNETJQ_PERF_PROVENANCE"
+          --native-executable "$DOTNETJQ_JQ182"
+          --upstream "$DOTNETJQ_UPSTREAM"
+          --baseline-root "$PWD/artifacts/performance-baseline"
+          --repetitions 3
+          --warmups 1
+          --startup-repetitions 300
+      - name: Measure all 21 sustained workloads
+        shell: bash
+        run: >-
+          env -u LD_PRELOAD python3 -B tools/performance/macro_benchmark.py
+          --framework-executable "$DOTNETJQ_PERF_FRAMEWORK"
+          --aot-executable "$DOTNETJQ_PERF_AOT"
+          --native-executable "$DOTNETJQ_JQ182"
+          --upstream "$DOTNETJQ_UPSTREAM"
+          --baseline-root "$PWD/artifacts/performance-baseline"
+          --scale 0.1
+          --warmups 1
+          --repetitions 3
+          --regenerate
+          --publishable
+      - name: Enforce the versioned relative-performance policy
+        shell: bash
+        run: >-
+          python3 -B tools/performance/check_release_gate.py
+          --fixture-results artifacts/performance/results/results.json
+          --macro-results artifacts/performance/macro-results/results.json
+          --thresholds tools/performance/release-thresholds.json
+      - name: Inspect selected artifact outputs for private data
+        id: privacy-artifacts-1
+        if: always() && steps.privacy-source.outcome == 'success'
+        shell: bash
+        run: |
+          privacy_outputs=()
+          for path in 'artifacts/performance/results' 'artifacts/performance/macro-results'; do
+            if [[ -e "$path" || -L "$path" ]]; then
+              privacy_outputs+=(--output "$path")
+            fi
+          done
+          python3 -B tools/privacy/check.py --metadata --github-hosted "${privacy_outputs[@]}"
+      - name: Preserve measured evidence
+        if: always() && steps.privacy-artifacts-1.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-performance-evidence
+          path: |
+            artifacts/performance/results
+            artifacts/performance/macro-results
+          if-no-files-found: warn
+          # Retain .dotnetjq-report-status.json for downloaded report verification.
+          include-hidden-files: true
+          retention-days: 14
+
+  native:
+    name: Build and test ${{ matrix.rid }}
+    needs:
+      - validate-tag
+      - semantic-compatibility
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-2025
+          - rid: win-arm64
+            os: windows-11-arm
+          - rid: linux-x64
+            os: ubuntu-24.04
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+          - rid: osx-x64
+            os: macos-15-intel
+          - rid: osx-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Resolve and validate package version
+        id: version
+        shell: bash
+        run: |
+          echo "value=${{ needs.validate-tag.outputs.version }}" >>"$GITHUB_OUTPUT"
+      - name: Install Linux NativeAOT prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang file zlib1g-dev
+      - name: Install deterministic archive prerequisite on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: brew install gnu-tar
+      - name: Provision exact jq source and official oracle
+        shell: bash
+        run: >-
+          bash tools/release/provision-jq-1.8.2-test-assets.sh
+          --rid '${{ matrix.rid }}'
+          --destination "$GITHUB_WORKSPACE/artifacts/test-assets/jq-1.8.2"
+          --github-env "$GITHUB_ENV"
+      - name: Prove cold NuGet package builds are byte-reproducible
+        shell: bash
+        run: bash tools/release/test-nuget-reproducibility.sh --rid '${{ matrix.rid }}'
+      - name: Inspect selected artifact outputs for private data
+        id: privacy-artifacts-1
+        if: failure() && steps.privacy-source.outcome == 'success'
+        shell: bash
+        run: |
+          privacy_outputs=()
+          for path in 'artifacts/reproducibility/${{ matrix.rid }}'; do
+            if [[ -e "$path" || -L "$path" ]]; then
+              privacy_outputs+=(--output "$path")
+            fi
+          done
+          python3 -B tools/privacy/check.py --metadata --github-hosted "${privacy_outputs[@]}"
+      - name: Preserve unequal cold-build package evidence
+        if: failure() && steps.privacy-artifacts-1.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-reproducibility-${{ matrix.rid }}
+          path: artifacts/reproducibility/${{ matrix.rid }}
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build and structurally verify NativeAOT archive
+        shell: bash
+        run: |
+          archive_arguments=(
+            --rid '${{ matrix.rid }}'
+            --version '${{ steps.version.outputs.value }}'
+            --output-directory artifacts/release
+            --execute-validation
+          )
+          if [[ '${{ matrix.rid }}' == 'linux-x64' ]]; then
+            archive_arguments+=(
+              --performance-provenance
+              'artifacts/release/dotnetjq-${{ steps.version.outputs.value }}-linux-x64.tar.gz.provenance.json'
+            )
+          fi
+          bash tools/release/build-native-archive.sh "${archive_arguments[@]}"
+      - name: Extract Unix release executable
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p 'artifacts/smoke/${{ matrix.rid }}'
+          tar -xzf 'artifacts/release/dotnetjq-${{ steps.version.outputs.value }}-${{ matrix.rid }}.tar.gz' \
+            -C 'artifacts/smoke/${{ matrix.rid }}'
+          printf 'DOTNETJQ_CLI=%s\n' \
+            "$PWD/artifacts/smoke/${{ matrix.rid }}/dotnetjq" >>"$GITHUB_ENV"
+      - name: Extract Windows release executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $destination = 'artifacts/smoke/${{ matrix.rid }}'
+          Expand-Archive 'artifacts/release/dotnetjq-${{ steps.version.outputs.value }}-${{ matrix.rid }}.zip' $destination
+          $subject = (Resolve-Path "$destination/dotnetjq.exe").Path
+          "DOTNETJQ_CLI=$subject" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Verify Unix executable
+        if: runner.os != 'Windows'
+        shell: bash
+        run: >-
+          sh tests/cli-shell/verify.sh
+          "$DOTNETJQ_CLI"
+          '${{ steps.version.outputs.value }}'
+      - name: Verify Windows executable in PowerShell 7
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          ./tests/powershell/Verify-DotNetJq.ps1
+          -CliPath $env:DOTNETJQ_CLI
+          -ExpectedShell PowerShell7
+          -ExpectedVersion '${{ steps.version.outputs.value }}'
+      - name: Verify Windows executable in Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          & powershell.exe
+          -NoLogo
+          -NoProfile
+          -NonInteractive
+          -ExecutionPolicy Bypass
+          -File tests/powershell/Verify-DotNetJq.ps1
+          -CliPath $env:DOTNETJQ_CLI
+          -ExpectedShell WindowsPowerShell51
+          -ExpectedVersion '${{ steps.version.outputs.value }}'
+      - name: Run complete strict process suite against release executable
+        shell: bash
+        run: |
+          dotnet restore "$CLI_TEST_PROJECT"
+          mkdir -p artifacts/test-results
+          dotnet test "$CLI_TEST_PROJECT" \
+            --configuration Release --no-restore \
+            --results-directory artifacts/test-results \
+            --logger 'trx;LogFileName=native-${{ matrix.rid }}.trx'
+          python tools/release/verify-trx-no-skips.py \
+            'artifacts/test-results/native-${{ matrix.rid }}.trx'
+      - name: Build RID-specific NuGet tool package
+        shell: bash
+        run: >-
+          dotnet pack "$CLI_PROJECT"
+          --disable-build-servers
+          --maxcpucount:1
+          --configuration Release
+          --runtime '${{ matrix.rid }}'
+          -p:ContinuousIntegrationBuild=true
+          -p:DebugSymbols=false
+          -p:DebugType=none
+          -p:NuGetAudit=false
+          -p:PublishAot=true
+          -p:SelfContained=true
+          -p:Version='${{ steps.version.outputs.value }}'
+          -p:PackageVersion='${{ steps.version.outputs.value }}'
+          -p:Authors="$RELEASE_AUTHORS"
+          -p:RepositoryUrl='https://github.com/${{ github.repository }}'
+          -p:UseSharedCompilation=false
+          --output artifacts/nuget
+      - name: Inspect selected artifact outputs for private data
+        id: privacy-artifacts-2
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/release --output artifacts/nuget
+      - name: Upload release inputs
+        if: steps.privacy-artifacts-2.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-input-${{ matrix.rid }}
+          path: |
+            artifacts/release/dotnetjq-*.zip
+            artifacts/release/dotnetjq-*.tar.gz
+            artifacts/release/*.provenance.json
+            artifacts/nuget/*.nupkg
+          if-no-files-found: error
+          retention-days: 14
+
+  native-musl:
+    name: Build and test ${{ matrix.rid }}
+    needs:
+      - validate-tag
+      - semantic-compatibility
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-musl-x64
+            os: ubuntu-24.04
+          - rid: linux-musl-arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - name: Resolve and validate package version
+        id: version
+        shell: bash
+        run: |
+          echo "value=${{ needs.validate-tag.outputs.version }}" >>"$GITHUB_OUTPUT"
+      - name: Provision exact jq source and static official oracle
+        shell: bash
+        run: >-
+          bash tools/release/provision-jq-1.8.2-test-assets.sh
+          --rid '${{ matrix.rid }}'
+          --destination "$GITHUB_WORKSPACE/artifacts/test-assets/jq-1.8.2"
+      - name: Build archive and package in the matching pinned Alpine SDK
+        shell: bash
+        run: |
+          mkdir -p artifacts/release artifacts/nuget
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            --env DOTNETJQ_BUILD_NUMBER \
+            --env DOTNETJQ_SOURCE_REVISION \
+            --env SOURCE_DATE_EPOCH \
+            "$ALPINE_AOT_SDK_IMAGE" \
+            sh -c "apk add --no-cache bash file icu-libs python3 tar unzip >/dev/null && bash tools/release/test-nuget-reproducibility.sh --rid '${{ matrix.rid }}' && bash tools/release/build-native-archive.sh --rid '${{ matrix.rid }}' --version '${{ steps.version.outputs.value }}' --output-directory artifacts/release --execute-validation && dotnet pack '$CLI_PROJECT' --disable-build-servers --maxcpucount:1 --configuration Release --runtime '${{ matrix.rid }}' -p:ContinuousIntegrationBuild=true -p:DebugSymbols=false -p:DebugType=none -p:NuGetAudit=false -p:PublishAot=true -p:SelfContained=true -p:Version='${{ steps.version.outputs.value }}' -p:PackageVersion='${{ steps.version.outputs.value }}' -p:Authors='$RELEASE_AUTHORS' -p:RepositoryUrl='https://github.com/${{ github.repository }}' -p:UseSharedCompilation=false --output artifacts/nuget"
+      - name: Inspect selected artifact outputs for private data
+        id: privacy-artifacts-1
+        if: failure() && steps.privacy-source.outcome == 'success'
+        shell: bash
+        run: |
+          privacy_outputs=()
+          for path in 'artifacts/reproducibility/${{ matrix.rid }}'; do
+            if [[ -e "$path" || -L "$path" ]]; then
+              privacy_outputs+=(--output "$path")
+            fi
+          done
+          python3 -B tools/privacy/check.py --metadata --github-hosted "${privacy_outputs[@]}"
+      - name: Preserve unequal cold-build package evidence
+        if: failure() && steps.privacy-artifacts-1.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-reproducibility-${{ matrix.rid }}
+          path: artifacts/reproducibility/${{ matrix.rid }}
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Extract release executable
+        shell: bash
+        run: |
+          mkdir -p 'artifacts/smoke/${{ matrix.rid }}'
+          tar -xzf 'artifacts/release/dotnetjq-${{ steps.version.outputs.value }}-${{ matrix.rid }}.tar.gz' \
+            -C 'artifacts/smoke/${{ matrix.rid }}'
+      - name: Verify executable in minimal pinned Alpine runtime image
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            "$ALPINE_RUNTIME_DEPS_IMAGE" \
+            sh -c 'apk add --no-cache icu-libs >/dev/null && sh tests/cli-shell/verify.sh "/repo/artifacts/smoke/${{ matrix.rid }}/dotnetjq" "${{ steps.version.outputs.value }}"'
+      - name: Run complete strict process suite against release executable in Alpine
+        shell: bash
+        run: |
+          mkdir -p artifacts/test-results
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            --env DOTNETJQ_REQUIRE_FULL_COMPATIBILITY=1 \
+            --env DOTNETJQ_JQ182=/repo/artifacts/test-assets/jq-1.8.2/oracle/jq \
+            --env DOTNETJQ_ORACLE=/repo/artifacts/test-assets/jq-1.8.2/oracle/jq \
+            --env DOTNETJQ_UPSTREAM=/repo/artifacts/test-assets/jq-1.8.2/upstream \
+            --env DOTNETJQ_CLI='/repo/artifacts/smoke/${{ matrix.rid }}/dotnetjq' \
+            "$ALPINE_AOT_SDK_IMAGE" \
+            sh -c "apk add --no-cache icu-libs >/dev/null && dotnet test '$CLI_TEST_PROJECT' --configuration Release --results-directory artifacts/test-results --logger 'trx;LogFileName=native-${{ matrix.rid }}.trx'"
+          python tools/release/verify-trx-no-skips.py \
+            'artifacts/test-results/native-${{ matrix.rid }}.trx'
+      - name: Inspect selected artifact outputs for private data
+        id: privacy-artifacts-2
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/release --output artifacts/nuget
+      - name: Upload release inputs
+        if: steps.privacy-artifacts-2.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-input-${{ matrix.rid }}
+          path: |
+            artifacts/release/dotnetjq-*.tar.gz
+            artifacts/nuget/*.nupkg
+          if-no-files-found: error
+          retention-days: 14
+
+  packages:
+    name: Assemble and verify ten NuGet and corresponding-source packages
+    needs:
+      - validate-tag
+      - semantic-compatibility
+      - native
+      - native-musl
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-input-*
+          path: artifacts/native
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/native
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          echo "value=${{ needs.validate-tag.outputs.version }}" >>"$GITHUB_OUTPUT"
+      - name: Provision exact jq source and official oracle
+        shell: bash
+        run: >-
+          bash tools/release/provision-jq-1.8.2-test-assets.sh
+          --rid linux-x64
+          --destination "$GITHUB_WORKSPACE/artifacts/test-assets/jq-1.8.2"
+          --github-env "$GITHUB_ENV"
+      - name: Pack the RID selector and managed library packages
+        shell: bash
+        run: |
+          dotnet pack "$CLI_PROJECT" \
+            --configuration Release \
+            -p:Version='${{ steps.version.outputs.value }}' \
+            -p:PackageVersion='${{ steps.version.outputs.value }}' \
+            -p:Authors="$RELEASE_AUTHORS" \
+            -p:RepositoryUrl='https://github.com/${{ github.repository }}' \
+            --output artifacts/pointer
+          dotnet pack "$LIBRARY_PROJECT" \
+            --configuration Release \
+            -p:Version='${{ steps.version.outputs.value }}' \
+            -p:PackageVersion='${{ steps.version.outputs.value }}' \
+            -p:Authors="$RELEASE_AUTHORS" \
+            -p:RepositoryUrl='https://github.com/${{ github.repository }}' \
+            --output artifacts/library
+      - name: Install release verification prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes binutils bubblewrap clang file ripgrep ruby unzip zip zlib1g-dev
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl --write kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Prime every resolved NativeAOT runtime pack
+        shell: bash
+        run: |
+          . tools/release/common.sh
+          targets_file="$RUNNER_TEMP/dotnetjq-release-targets.txt"
+          release_each_target >"$targets_file"
+          while IFS= read -r rid; do
+            dotnet restore "$CLI_PROJECT" \
+              --runtime "$rid" -p:PublishAot=true -p:NuGetAudit=false
+          done <"$targets_file"
+          dotnet restore "$CLI_TEST_PROJECT" -p:NuGetAudit=false
+      - name: Verify the managed library package in isolation
+        shell: bash
+        run: >-
+          bash tools/verify-isolated-package.sh
+          --package 'artifacts/library/DotNetJq.Library.${{ steps.version.outputs.value }}.nupkg'
+          --version '${{ steps.version.outputs.value }}'
+          --authors "$RELEASE_AUTHORS"
+          --repository-url 'https://github.com/${{ github.repository }}'
+      - name: Prove deterministic corresponding source and LGPL relinking
+        shell: bash
+        run: >-
+          bash tools/aot-compliance/verify-relink.sh
+          --version '${{ steps.version.outputs.value }}'
+          --rid linux-x64
+          | tee artifacts/aot-relink-proof.txt
+      - name: Build the distributable corresponding-source archive twice
+        shell: bash
+        run: |
+          mkdir -p artifacts/source-one artifacts/source-two
+          tools/aot-compliance/create-source-archive.sh --version '${{ steps.version.outputs.value }}' --output-dir artifacts/source-one
+          tools/aot-compliance/create-source-archive.sh --version '${{ steps.version.outputs.value }}' --output-dir artifacts/source-two
+          cmp 'artifacts/source-one/dotnetjq-aot-source-${{ steps.version.outputs.value }}.tar.gz' 'artifacts/source-two/dotnetjq-aot-source-${{ steps.version.outputs.value }}.tar.gz'
+          cmp 'artifacts/source-one/dotnetjq-aot-source-${{ steps.version.outputs.value }}.tar.gz.sha256' 'artifacts/source-two/dotnetjq-aot-source-${{ steps.version.outputs.value }}.tar.gz.sha256'
+      - name: Collect exactly ten NuGet packages and eight native archives
+        shell: bash
+        run: |
+          mkdir -p artifacts/bundle
+          find artifacts/native -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 |
+            while IFS= read -r -d '' archive; do
+              destination="artifacts/bundle/$(basename "$archive")"
+              [ ! -e "$destination" ] || { echo "Duplicate archive: $(basename "$archive")" >&2; exit 1; }
+              cp "$archive" "$destination"
+            done
+          find artifacts/native artifacts/pointer artifacts/library -type f -name '*.nupkg' -print0 |
+            while IFS= read -r -d '' package; do
+              destination="artifacts/bundle/$(basename "$package")"
+              if [ -e "$destination" ]; then
+                cmp "$package" "$destination" || {
+                  echo "Conflicting package filename: $(basename "$package")" >&2
+                  exit 1
+                }
+              else
+                cp "$package" "$destination"
+              fi
+            done
+          cp artifacts/source-one/* artifacts/bundle/
+          cp artifacts/aot-relink-proof.txt artifacts/bundle/
+          count=$(find artifacts/bundle -maxdepth 1 -type f -name '*.nupkg' | wc -l)
+          [ "$count" -eq 10 ] || {
+            echo "Expected 10 packages (library, 8 AOT RIDs, pointer); found $count" >&2
+            find artifacts/bundle -maxdepth 1 -type f -print >&2
+            exit 1
+          }
+          archive_count=$(find artifacts/bundle -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) ! -name '*source*' | wc -l)
+          [ "$archive_count" -eq 8 ] || {
+            echo "Expected 8 NativeAOT archives; found $archive_count" >&2
+            exit 1
+          }
+          bash tools/release/verify-nuget-package-set.sh --directory artifacts/bundle --package-id dotnetjq --library-package-id DotNetJq.Library --version '${{ steps.version.outputs.value }}' --authors "$RELEASE_AUTHORS" --repository-url 'https://github.com/${{ github.repository }}' --native-archives artifacts/bundle
+      - name: Install selector from a strictly local ten-package feed
+        shell: bash
+        run: |
+          mkdir -p artifacts/tool-install artifacts/nuget-cache artifacts/dotnet-home
+          feed="$PWD/artifacts/bundle"
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="utf-8"?>' \
+            '<configuration>' \
+            '  <packageSources>' \
+            '    <clear />' \
+            "    <add key=\"release-bundle\" value=\"$feed\" />" \
+            '  </packageSources>' \
+            '</configuration>' >artifacts/local-feed.config
+          NUGET_PACKAGES="$PWD/artifacts/nuget-cache" \
+          DOTNET_CLI_HOME="$PWD/artifacts/dotnet-home" \
+            dotnet tool install dotnetjq \
+              --tool-path artifacts/tool-install \
+              --configfile artifacts/local-feed.config \
+              --version '${{ steps.version.outputs.value }}' \
+              --no-http-cache
+      - name: Run complete strict process suite against installed package
+        shell: bash
+        run: |
+          export DOTNETJQ_CLI="$PWD/artifacts/tool-install/dotnetjq"
+          sh tests/cli-shell/verify.sh "$DOTNETJQ_CLI" '${{ steps.version.outputs.value }}'
+          mkdir -p artifacts/test-results
+          dotnet test "$CLI_TEST_PROJECT" \
+            --configuration Release --no-restore \
+            --results-directory artifacts/test-results \
+            --logger 'trx;LogFileName=installed-package.trx'
+          python tools/release/verify-trx-no-skips.py \
+            artifacts/test-results/installed-package.trx
+      - name: Generate package-manager metadata and publication order
+        shell: bash
+        run: |
+          bash tools/release/create-nuget-publish-plan.sh --directory artifacts/bundle --package-id dotnetjq --library-package-id DotNetJq.Library --version '${{ steps.version.outputs.value }}' --authors "$RELEASE_AUTHORS" --repository-url 'https://github.com/${{ github.repository }}' --output artifacts/bundle/nuget-publish-order.tsv
+          bash tools/release/generate-homebrew-formula.sh --version '${{ steps.version.outputs.value }}' --repository "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --artifacts artifacts/bundle --output artifacts/bundle/dotnetjq.rb
+          bash tools/release/generate-winget-manifests.sh --version '${{ steps.version.outputs.value }}' --repository "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --publisher "$WINGET_PUBLISHER" --package-id "$WINGET_PACKAGE_ID" --artifacts artifacts/bundle --output-directory artifacts/bundle
+      - name: Verify exact Homebrew and WinGet metadata
+        shell: bash
+        run: >-
+          bash tools/release/verify-package-manager-metadata.sh
+          --version '${{ steps.version.outputs.value }}'
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --publisher "$WINGET_PUBLISHER"
+          --winget-package-id "$WINGET_PACKAGE_ID"
+          --artifacts artifacts/bundle
+      - name: Generate and verify release checksums
+        shell: bash
+        run: |
+          bash tools/release/generate-checksums.sh --directory artifacts/bundle
+          bash tools/release/verify-checksums.sh --directory artifacts/bundle
+      - name: Verify complete release bundle and relinking evidence
+        shell: bash
+        run: >-
+          bash tools/release/verify-release-bundle.sh
+          --version '${{ steps.version.outputs.value }}'
+          --artifacts artifacts/bundle
+          --package-id dotnetjq
+          --library-package-id DotNetJq.Library
+          --proof artifacts/bundle/aot-relink-proof.txt
+          --proof-rid linux-x64
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --authors "$RELEASE_AUTHORS"
+          --publisher "$WINGET_PUBLISHER"
+          --winget-package-id "$WINGET_PACKAGE_ID"
+      - name: Inspect selected artifact outputs for private data
+        id: privacy-artifacts-1
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/bundle
+      - name: Upload complete verified release bundle
+        if: steps.privacy-artifacts-1.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-packages
+          path: artifacts/bundle/
+          if-no-files-found: error
+          retention-days: 14
+
+  installed-package:
+    name: Install exact local-feed package (${{ matrix.rid }})
+    needs:
+      - validate-tag
+      - packages
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-2025
+            musl: false
+          - rid: win-arm64
+            os: windows-11-arm
+            musl: false
+          - rid: linux-x64
+            os: ubuntu-24.04
+            musl: false
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+            musl: false
+          - rid: linux-musl-x64
+            os: ubuntu-24.04
+            musl: true
+          - rid: linux-musl-arm64
+            os: ubuntu-24.04-arm
+            musl: true
+          - rid: osx-x64
+            os: macos-15-intel
+            musl: false
+          - rid: osx-arm64
+            os: macos-15
+            musl: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        if: matrix.musl == false
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: artifacts/bundle
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/bundle
+      - name: Resolve and validate package version
+        id: version
+        shell: bash
+        run: |
+          echo "value=${{ needs.validate-tag.outputs.version }}" >>"$GITHUB_OUTPUT"
+      - name: Verify native host architecture fixtures
+        if: matrix.musl == false
+        shell: bash
+        run: |
+          bash tools/release/test-host-rid.sh
+          bash tools/release/test-package-host-prerequisites.sh
+      - name: Install selector and exact RID package from the local-only bundle
+        if: matrix.musl == false
+        shell: bash
+        run: >-
+          bash tools/release/verify-local-tool-package.sh
+          --version '${{ steps.version.outputs.value }}'
+          --authors "$RELEASE_AUTHORS"
+          --repository-url 'https://github.com/${{ github.repository }}'
+          --package-id dotnetjq
+          --rid '${{ matrix.rid }}'
+          --package-directory artifacts/bundle
+          --native-archives artifacts/bundle
+      - name: Install selector and exact musl RID package in pinned Alpine
+        if: matrix.musl == true
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "$PWD:/repo" \
+            --workdir /repo \
+            --env SOURCE_DATE_EPOCH \
+            "$ALPINE_AOT_SDK_IMAGE" \
+            sh -c "apk add --no-cache bash file icu-libs python3 unzip >/dev/null && bash tools/release/test-package-host-prerequisites.sh && bash tools/release/verify-local-tool-package.sh --version '${{ steps.version.outputs.value }}' --authors '$RELEASE_AUTHORS' --repository-url 'https://github.com/${{ github.repository }}' --package-id dotnetjq --rid '${{ matrix.rid }}' --package-directory artifacts/bundle --native-archives artifacts/bundle"
+
+  publication-preflight:
+    name: Reverify the release bundle and publication boundary
+    needs:
+      - validate-tag
+      - performance-regression
+      - packages
+      - installed-package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Install bundle verification prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes file ruby unzip
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: artifacts/bundle
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/bundle
+      - name: Revalidate the remote tag immediately before publication
+        shell: bash
+        run: >-
+          bash tools/release/assert-release-tag.sh --tag "$GITHUB_REF_NAME"
+          --expected-commit '${{ needs.validate-tag.outputs.commit }}'
+      - name: Reverify the downloaded bundle and publication evidence
+        shell: bash
+        run: |
+          bash tools/release/verify-release-bundle.sh \
+            --version '${{ needs.validate-tag.outputs.version }}' \
+            --artifacts artifacts/bundle \
+            --package-id dotnetjq \
+            --library-package-id DotNetJq.Library \
+            --proof artifacts/bundle/aot-relink-proof.txt \
+            --proof-rid linux-x64 \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --authors "$RELEASE_AUTHORS" \
+            --publisher "$WINGET_PUBLISHER" \
+            --winget-package-id "$WINGET_PACKAGE_ID"
+          bash tools/release/assert-publication-ready.sh \
+            --version '${{ needs.validate-tag.outputs.version }}' \
+            --artifacts artifacts/bundle \
+            --proof artifacts/bundle/aot-relink-proof.txt \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --publisher "$WINGET_PUBLISHER" \
+            --winget-package-id "$WINGET_PACKAGE_ID"
+
+  attest:
+    name: Attest the verified release assets
+    needs:
+      - validate-tag
+      - publication-preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: artifacts/bundle
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/bundle
+      - name: Create build-provenance attestations from the verified inventory
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: artifacts/bundle/SHA256SUMS
+
+  stage-github-release:
+    name: Stage immutable GitHub release assets
+    needs:
+      - validate-tag
+      - attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: artifacts/bundle
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/bundle
+      - name: Revalidate the remote tag before creating the draft
+        shell: bash
+        run: >-
+          bash tools/release/assert-release-tag.sh --tag "$GITHUB_REF_NAME"
+          --expected-commit '${{ needs.validate-tag.outputs.commit }}'
+      - name: Generate the deterministic release body
+        shell: bash
+        run: >-
+          bash tools/release/generate-release-notes.sh
+          --version '${{ needs.validate-tag.outputs.version }}'
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --output "$RUNNER_TEMP/dotnetjq-release-notes.md"
+      - name: Inspect the exact release body before publication
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output "$RUNNER_TEMP/dotnetjq-release-notes.md"
+      - name: Classify any existing release and verify its exact assets
+        id: release-state
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/release/probe-github-release.py
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --name 'DotNetJq ${{ needs.validate-tag.outputs.version }} — jq 1.8.2 compatible'
+          --body-file "$RUNNER_TEMP/dotnetjq-release-notes.md"
+          --artifacts artifacts/bundle
+          --prerelease '${{ needs.validate-tag.outputs.prerelease }}'
+          --github-output "$GITHUB_OUTPUT"
+      - name: Create the draft and upload the complete verified bundle
+        if: >-
+          steps.release-state.outputs.state == 'missing' ||
+          steps.release-state.outputs.state == 'partial-draft'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: DotNetJq ${{ needs.validate-tag.outputs.version }} — jq 1.8.2 compatible
+          body_path: ${{ runner.temp }}/dotnetjq-release-notes.md
+          draft: true
+          prerelease: ${{ needs.validate-tag.outputs.prerelease }}
+          make_latest: false
+          overwrite_files: false
+          fail_on_unmatched_files: true
+          files: artifacts/bundle/*
+      - name: Verify every draft asset byte before package publication
+        if: steps.release-state.outputs.state != 'published'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/release/verify-github-release-assets.py
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --name 'DotNetJq ${{ needs.validate-tag.outputs.version }} — jq 1.8.2 compatible'
+          --body-file "$RUNNER_TEMP/dotnetjq-release-notes.md"
+          --artifacts artifacts/bundle
+          --state draft
+          --prerelease '${{ needs.validate-tag.outputs.prerelease }}'
+      - name: Verify an already published exact release on a safe rerun
+        if: steps.release-state.outputs.state == 'published'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/release/verify-github-release-assets.py
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --name 'DotNetJq ${{ needs.validate-tag.outputs.version }} — jq 1.8.2 compatible'
+          --body-file "$RUNNER_TEMP/dotnetjq-release-notes.md"
+          --artifacts artifacts/bundle
+          --state published
+          --prerelease '${{ needs.validate-tag.outputs.prerelease }}'
+
+  publish-core:
+    name: Publish NuGet packages and the GitHub release
+    needs:
+      - validate-tag
+      - stage-github-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: release
+    outputs:
+      superseded: ${{ steps.protected-release-state.outputs.superseded }}
+      homebrew_configured: ${{ steps.optional-publishers.outputs.homebrew_configured }}
+      winget_configured: ${{ steps.optional-publishers.outputs.winget_configured }}
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B tools/privacy/check.py --history
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Install bundle verification prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes file ruby unzip
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: artifacts/bundle
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output artifacts/bundle
+      - name: Revalidate the remote tag before publishing packages
+        shell: bash
+        run: >-
+          bash tools/release/assert-release-tag.sh --tag "$GITHUB_REF_NAME"
+          --expected-commit '${{ needs.validate-tag.outputs.commit }}'
+      - name: Reverify the bundle at the protected publication boundary
+        shell: bash
+        run: |
+          bash tools/release/verify-release-bundle.sh \
+            --version '${{ needs.validate-tag.outputs.version }}' \
+            --artifacts artifacts/bundle \
+            --package-id dotnetjq \
+            --library-package-id DotNetJq.Library \
+            --proof artifacts/bundle/aot-relink-proof.txt \
+            --proof-rid linux-x64 \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --authors "$RELEASE_AUTHORS" \
+            --publisher "$WINGET_PUBLISHER" \
+            --winget-package-id "$WINGET_PACKAGE_ID"
+      - name: Regenerate the deterministic release body
+        shell: bash
+        run: >-
+          bash tools/release/generate-release-notes.sh
+          --version '${{ needs.validate-tag.outputs.version }}'
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --output "$RUNNER_TEMP/dotnetjq-release-notes.md"
+      - name: Inspect the exact release body before publication
+        shell: bash
+        run: python3 -B tools/privacy/check.py --metadata --github-hosted --output "$RUNNER_TEMP/dotnetjq-release-notes.md"
+      - name: Reclassify and verify the release immediately before publication
+        id: protected-release-state
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/release/probe-github-release.py
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --name 'DotNetJq ${{ needs.validate-tag.outputs.version }} — jq 1.8.2 compatible'
+          --body-file "$RUNNER_TEMP/dotnetjq-release-notes.md"
+          --artifacts artifacts/bundle
+          --prerelease '${{ needs.validate-tag.outputs.prerelease }}'
+          --github-output "$GITHUB_OUTPUT"
+      - name: Reject any incomplete staged release at the protected boundary
+        if: >-
+          steps.protected-release-state.outputs.state != 'exact-draft' &&
+          steps.protected-release-state.outputs.state != 'published'
+        shell: bash
+        run: |
+          echo 'The GitHub release is not an exact draft or exact published release at the protected boundary.' >&2
+          exit 1
+      - name: Require GitHub release immutability before package publication
+        shell: bash
+        env:
+          RELEASE_SETTINGS_GITHUB_TOKEN: ${{ secrets.RELEASE_SETTINGS_GITHUB_TOKEN }}
+        run: |
+          [ -n "$RELEASE_SETTINGS_GITHUB_TOKEN" ] || {
+            echo 'RELEASE_SETTINGS_GITHUB_TOKEN is required to verify immutable releases.' >&2
+            exit 1
+          }
+          response="$RUNNER_TEMP/immutable-releases.json"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $RELEASE_SETTINGS_GITHUB_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/immutable-releases" \
+            --output "$response"
+          python3 - "$response" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              settings = json.load(stream)
+          if settings.get("enabled") is not True:
+              raise SystemExit("GitHub release immutability is not enabled")
+          PY
+      - name: Detect optional package-manager publishers
+        id: optional-publishers
+        shell: bash
+        env:
+          HOMEBREW_APP_ID: ${{ vars.HOMEBREW_APP_ID }}
+          HOMEBREW_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          HOMEBREW_TAP_OWNER: ${{ vars.HOMEBREW_TAP_OWNER }}
+          HOMEBREW_TAP_NAME: ${{ vars.HOMEBREW_TAP_NAME }}
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          homebrew_configured=false
+          if [ -n "$HOMEBREW_APP_ID" ] && \
+             [ -n "$HOMEBREW_APP_PRIVATE_KEY" ] && \
+             [ -n "$HOMEBREW_TAP_OWNER" ] && \
+             [ -n "$HOMEBREW_TAP_NAME" ]; then
+            homebrew_configured=true
+          fi
+
+          winget_configured=false
+          if [ -n "$WINGET_CREATE_GITHUB_TOKEN" ]; then
+            winget_configured=true
+          fi
+
+          {
+            echo "homebrew_configured=$homebrew_configured"
+            echo "winget_configured=$winget_configured"
+          } >>"$GITHUB_OUTPUT"
+
+          if [ "$homebrew_configured" = false ]; then
+            echo '::notice::Homebrew submission is deferred because its optional publisher credential is not configured.'
+          fi
+          if [ "$winget_configured" = false ]; then
+            echo '::notice::WinGet submission is deferred because its optional publisher credential is not configured.'
+          fi
+      - name: Create a least-privilege Homebrew preflight token
+        if: >-
+          needs.validate-tag.outputs.prerelease == 'false' &&
+          steps.protected-release-state.outputs.superseded == 'false' &&
+          steps.optional-publishers.outputs.homebrew_configured == 'true'
+        id: homebrew-preflight-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: ${{ vars.HOMEBREW_TAP_OWNER }}
+          repositories: ${{ vars.HOMEBREW_TAP_NAME }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Verify the configured Homebrew publisher before core publication
+        if: >-
+          needs.validate-tag.outputs.prerelease == 'false' &&
+          steps.protected-release-state.outputs.superseded == 'false' &&
+          steps.optional-publishers.outputs.homebrew_configured == 'true'
+        shell: bash
+        env:
+          HOMEBREW_TOKEN: ${{ steps.homebrew-preflight-token.outputs.token }}
+          HOMEBREW_TAP_OWNER: ${{ vars.HOMEBREW_TAP_OWNER }}
+          HOMEBREW_TAP_NAME: ${{ vars.HOMEBREW_TAP_NAME }}
+        run: |
+          response="$RUNNER_TEMP/homebrew-tap.json"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $HOMEBREW_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$HOMEBREW_TAP_OWNER/$HOMEBREW_TAP_NAME" \
+            --output "$response"
+          python3 - "$response" "$HOMEBREW_TAP_OWNER/$HOMEBREW_TAP_NAME" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              repository = json.load(stream)
+          if repository.get("full_name", "").casefold() != sys.argv[2].casefold():
+              raise SystemExit("Homebrew App token resolved an unexpected repository")
+          if not repository.get("permissions", {}).get("push"):
+              raise SystemExit("Homebrew App token does not have Contents write access")
+          PY
+      - name: Verify the configured WinGet publisher before core publication
+        if: >-
+          needs.validate-tag.outputs.prerelease == 'false' &&
+          steps.protected-release-state.outputs.superseded == 'false' &&
+          steps.optional-publishers.outputs.winget_configured == 'true'
+        shell: bash
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          headers="$RUNNER_TEMP/winget-token.headers"
+          response="$RUNNER_TEMP/winget-token.json"
+          curl --fail --silent --show-error \
+            --dump-header "$headers" \
+            --header "Authorization: Bearer $WINGET_CREATE_GITHUB_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/user" \
+            --output "$response"
+          python3 - "$response" "$headers" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              user = json.load(stream)
+          if user.get("login", "").casefold() != "gtg-open-maintainer":
+              raise SystemExit("WinGet token belongs to an unexpected GitHub account")
+          with open(sys.argv[2], encoding="iso-8859-1") as stream:
+              scope_lines = [
+                  line.split(":", 1)[1].strip()
+                  for line in stream
+                  if line.casefold().startswith("x-oauth-scopes:")
+              ]
+          if len(scope_lines) != 1:
+              raise SystemExit("WinGet token response has no unique OAuth scope header")
+          scopes = {value.strip() for value in scope_lines[0].split(",") if value.strip()}
+          if scopes != {"public_repo"}:
+              raise SystemExit(
+                  "WinGet token must grant exactly public_repo and no broader scope"
+              )
+          PY
+      - name: Request a short-lived NuGet API key
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish or safely resume the verified NuGet plan
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: >-
+          bash tools/release/publish-nuget-plan.sh
+          --directory artifacts/bundle
+          --expected-owner "$NUGET_OWNER"
+      - name: Publish the already populated draft
+        if: steps.protected-release-state.outputs.state == 'exact-draft'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: DotNetJq ${{ needs.validate-tag.outputs.version }} — jq 1.8.2 compatible
+          body_path: ${{ runner.temp }}/dotnetjq-release-notes.md
+          draft: false
+          prerelease: ${{ needs.validate-tag.outputs.prerelease }}
+          make_latest: >-
+            ${{ needs.validate-tag.outputs.prerelease == 'false' &&
+                steps.protected-release-state.outputs.superseded == 'false' }}
+          overwrite_files: false
+      - name: Verify the published release retained every exact asset
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/release/verify-github-release-assets.py
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$GITHUB_REF_NAME"
+          --name 'DotNetJq ${{ needs.validate-tag.outputs.version }} — jq 1.8.2 compatible'
+          --body-file "$RUNNER_TEMP/dotnetjq-release-notes.md"
+          --artifacts artifacts/bundle
+          --state published
+          --prerelease '${{ needs.validate-tag.outputs.prerelease }}'
+
+  homebrew:
+    name: Open the Homebrew tap update
+    if: >-
+      needs.validate-tag.outputs.prerelease == 'false' &&
+      needs.publish-core.outputs.superseded == 'false' &&
+      needs.publish-core.outputs.homebrew_configured == 'true'
+    needs:
+      - validate-tag
+      - publish-core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --history
+      - name: Create a least-privilege tap token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: ${{ vars.HOMEBREW_TAP_OWNER }}
+          repositories: ${{ vars.HOMEBREW_TAP_NAME }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ vars.HOMEBREW_TAP_OWNER }}/${{ vars.HOMEBREW_TAP_NAME }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: artifacts/bundle
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --metadata --github-hosted --output artifacts/bundle
+      - name: Classify the current tap formula without allowing a downgrade
+        id: homebrew-formula
+        shell: bash
+        run: |
+          state=$(python3 source/tools/release/classify-homebrew-formula.py \
+            --current tap/Formula/dotnetjq.rb \
+            --candidate artifacts/bundle/dotnetjq.rb \
+            --version '${{ needs.validate-tag.outputs.version }}')
+          echo "state=$state" >>"$GITHUB_OUTPUT"
+      - name: Stage the verified formula
+        if: startsWith(steps.homebrew-formula.outputs.state, 'publish:')
+        shell: bash
+        run: |
+          mkdir -p tap/Formula
+          cp artifacts/bundle/dotnetjq.rb tap/Formula/dotnetjq.rb
+      - name: Inspect the exact staged Homebrew formula
+        if: startsWith(steps.homebrew-formula.outputs.state, 'publish:')
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --metadata --github-hosted --output tap/Formula/dotnetjq.rb
+      - name: Revalidate the release tag before opening the tap pull request
+        shell: bash
+        working-directory: source
+        run: >-
+          bash tools/release/assert-release-tag.sh --tag "$GITHUB_REF_NAME"
+          --expected-commit '${{ needs.validate-tag.outputs.commit }}'
+      - name: Open a reviewable tap pull request
+        if: startsWith(steps.homebrew-formula.outputs.state, 'publish:')
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+          branch: release/dotnetjq-${{ needs.validate-tag.outputs.version }}
+          delete-branch: true
+          commit-message: Update dotnetjq to ${{ needs.validate-tag.outputs.version }}
+          title: Update dotnetjq to ${{ needs.validate-tag.outputs.version }}
+          body: Generated from the verified DotNetJq ${{ needs.validate-tag.outputs.version }} release bundle.
+      - name: Report an already current or superseded tap formula
+        if: startsWith(steps.homebrew-formula.outputs.state, 'skip:')
+        shell: bash
+        run: echo "Homebrew formula state is ${{ steps.homebrew-formula.outputs.state }}; no pull request is needed."
+
+  winget:
+    name: Submit the WinGet manifests
+    if: >-
+      needs.validate-tag.outputs.prerelease == 'false' &&
+      needs.publish-core.outputs.superseded == 'false' &&
+      needs.publish-core.outputs.winget_configured == 'true'
+    needs:
+      - validate-tag
+      - publish-core
+    runs-on: windows-2025
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Inspect source and reachable history for private data
+        id: privacy-source
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --history
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-packages
+          path: artifacts/bundle
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --metadata --github-hosted --output artifacts/bundle
+      - name: Prepare the exact stable manifests
+        shell: pwsh
+        run: |
+          bash source/tools/release/assert-release-tag.sh `
+            --tag "$env:GITHUB_REF_NAME" `
+            --expected-commit '${{ needs.validate-tag.outputs.commit }}'
+          New-Item -ItemType Directory -Path artifacts/winget | Out-Null
+          Copy-Item artifacts/bundle/GtGOpen.DotNetJq*.yaml artifacts/winget/
+      - name: Inspect the exact WinGet submission files
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --metadata --github-hosted --output artifacts/winget
+      - name: Classify an existing exact WinGet submission
+        id: winget-pr
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          python source/tools/release/probe-winget-pull-request.py `
+            --package-id "$env:WINGET_PACKAGE_ID" `
+            --version '${{ needs.validate-tag.outputs.version }}' `
+            --manifests artifacts/winget `
+            --pr-title 'DotNetJq ${{ needs.validate-tag.outputs.version }}' `
+            --github-output "$env:GITHUB_OUTPUT"
+      - name: Download and verify WingetCreate 1.12.13.0
+        if: steps.winget-pr.outputs.state == 'missing'
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe'
+          Invoke-WebRequest -Uri $url -OutFile wingetcreate.exe
+          $actual = (Get-FileHash .\wingetcreate.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea'
+          if ($actual -ne $expected) {
+            throw "WingetCreate checksum mismatch: $actual"
+          }
+      - name: Submit the exact stable manifests
+        if: steps.winget-pr.outputs.state == 'missing'
+        id: submit-winget
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          $submissionOutput = @(.\wingetcreate.exe submit `
+            --prtitle "DotNetJq ${{ needs.validate-tag.outputs.version }}" `
+            --no-open `
+            artifacts/winget 2>&1)
+          $submissionExitCode = $LASTEXITCODE
+          $submissionOutput | Write-Output
+          if ($submissionExitCode -ne 0) {
+            throw "WingetCreate exited with status $submissionExitCode"
+          }
+          $numbers = @(
+            [regex]::Matches(
+              ($submissionOutput -join "`n"),
+              'https://github\.com/microsoft/winget-pkgs/pull/([1-9][0-9]*)'
+            ) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+          )
+          if ($numbers.Count -ne 1) {
+            throw 'WingetCreate did not report exactly one WinGet pull-request URL.'
+          }
+          "pull_request_number=$($numbers[0])" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Verify the submitted WinGet pull request by its exact identity
+        if: steps.winget-pr.outputs.state == 'missing'
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          $verified = $false
+          foreach ($attempt in 1..12) {
+            python source/tools/release/probe-winget-pull-request.py `
+              --package-id "$env:WINGET_PACKAGE_ID" `
+              --version '${{ needs.validate-tag.outputs.version }}' `
+              --manifests artifacts/winget `
+              --pr-title 'DotNetJq ${{ needs.validate-tag.outputs.version }}' `
+              --pull-request-number '${{ steps.submit-winget.outputs.pull_request_number }}'
+            if ($LASTEXITCODE -eq 0) {
+              $verified = $true
+              break
+            }
+            if ($attempt -lt 12) { Start-Sleep -Seconds 5 }
+          }
+          if (-not $verified) {
+            throw 'Submitted WinGet pull request did not become exactly verifiable.'
+          }
+      - name: Report the already verified WinGet pull request
+        if: steps.winget-pr.outputs.state == 'exact-existing'
+        shell: pwsh
+        run: >-
+          Write-Host
+          'Exact WinGet submission already exists:'
+          '${{ steps.winget-pr.outputs.pull_request_url }}'
+      - name: Report the already published WinGet version
+        if: steps.winget-pr.outputs.state == 'exact-published'
+        shell: pwsh
+        run: >-
+          Write-Host
+          'Exact WinGet manifests are already published; no submission is needed.'

@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "baseline": {
+    "repository": "https://github.com/gtg-open/dotnetjq",
+    "commit": "0ceaaaadc5582dac77491de183b6a8f1104adbf8",
+    "description": "Initial public source snapshot; rebuilt and measured beside each candidate, never historical workstation timings"
+  },
+  "maximum_candidate_to_baseline_ratios": {
+    "fixture_mean": {
+      "aot-dotnetjq": 1.30,
+      "framework-dotnetjq": 1.30
+    },
+    "startup_median": {
+      "aot-dotnetjq": 1.30,
+      "framework-dotnetjq": 1.30
+    },
+    "macro_processing_geomean": {
+      "aot-dotnetjq": 1.30,
+      "framework-dotnetjq": 1.30
+    }
+  }
+}
