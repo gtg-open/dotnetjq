@@ -5,6 +5,8 @@ DotNetJq targets jq 1.8.2 at commit
 Every upstream source file and official test category is classified as `PORT`,
 `PROXY`, `GENERATED`, `REUSE`, or `OMITTED` in the
 [porting manifest](../porting/PORTING_MANIFEST.json).
+The [technical port specification](../dotnetjq-port-spec.md) defines the
+conversion and verification rules.
 
 ## What is tested
 

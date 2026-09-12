@@ -93,7 +93,7 @@ SHA-256, tool identity, and a generation key. `generate-parser` reuses an
 output whose input/tool key already matches; `check-generated-parser` always
 regenerates in a temp directory and compares every byte. Generated output is
 intended to be committed, so consuming `DotNetJq` does not run or restore the
-tool. The lexer agent owns the corresponding GPLEX production pipeline; this
+tool. The lexer pipeline owns the corresponding GPLEX production path; this
 tool deliberately does not create a competing lexer generator.
 
 Springcomp.GPPG 1.2.5 has a `/conflicts` regression: its code generator returns

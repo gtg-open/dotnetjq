@@ -101,7 +101,8 @@ corpora, NativeAOT smoke tests, package-isolation tests, and the complete
 platform matrix. It also repeats the full 879-scenario and 21-workload timed
 comparison and blocks a material regression before publication. Exact claims
 and exclusions are recorded in the
-[compatibility guide](https://github.com/gtg-open/dotnetjq/blob/main/docs/compatibility.md)
+[compatibility guide](https://github.com/gtg-open/dotnetjq/blob/main/docs/compatibility.md),
+[technical port specification](https://github.com/gtg-open/dotnetjq/blob/main/dotnetjq-port-spec.md),
 and [porting manifest](https://github.com/gtg-open/dotnetjq/blob/main/porting/PORTING_MANIFEST.json).
 
 Reference workstation Linux x64 process benchmark, measured 2026-09-06:

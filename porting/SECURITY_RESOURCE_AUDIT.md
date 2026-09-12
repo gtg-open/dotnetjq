@@ -5,7 +5,7 @@ Audit date: 2026-09-05
 Scope: the managed `DotNetJq` library at jq-1.8.2 revision
 `34f7186b86743a083a589741b6cea95293524108`, using .NET SDK 10.0.400. This is a
 Definition-of-Done audit of the controls listed in sections 13.7 and 22 of
-`dotnetjq-autonomous-ai-port-spec.md`; it is not a claim that untrusted execution is
+`dotnetjq-port-spec.md`; it is not a claim that untrusted execution is
 fully sandboxed.
 
 ## Result
@@ -129,8 +129,9 @@ memory and CPU limits in the hosting layer.
 
 8. **Defaults preserve jq compatibility rather than restricting untrusted work.** VM dispatch,
    recursive evaluation, and regex-operation budgets are effectively unlimited, and wall time,
-   input, output-byte, and output-value limits are unset. AI hosts must supply an explicitly
-   restrictive `JqExecutionOptions` instance and an external process memory/CPU boundary.
+   input, output-byte, and output-value limits are unset. Untrusted-workload hosts must
+   supply an explicitly restrictive `JqExecutionOptions` instance and an external process
+   memory/CPU boundary.
 
 ### Environment note
 

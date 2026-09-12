@@ -1,9 +1,9 @@
-# DotNetJq Agent Rules
+# DotNetJq Contributor Rules
 
 1. Upstream jq-1.8.2 commit 34f7186b86743a083a589741b6cea95293524108 is the semantic source of truth.
 2. Never redesign the compatibility core without an explicit task.
 3. Preserve upstream file mappings and function names.
-4. Read porting/PORTING_MANIFEST.json before making changes.
+4. Read dotnetjq-port-spec.md and porting/PORTING_MANIFEST.json before making porting changes.
 5. Every upstream file must be PORT, PROXY, GENERATED, REUSE, or OMITTED.
 6. Never delete a mapped symbol merely because it appears unused until upstream behavior/tests confirm it is unnecessary.
 7. Proxies must remain behind jq-shaped compatibility interfaces.
@@ -22,11 +22,11 @@ Before every commit or publication, inspect the exact staged contents and any ge
 
 Publication safety protocol
 
-1. Before creating a commit, every agent change must include a local review of exactly what is being changed (including generated files): `git diff --name-only` and `git diff --cached --name-only`.
+1. Before creating a commit, every change must include a local review of exactly what is being changed (including generated files): `git diff --name-only` and `git diff --cached --name-only`.
 2. Before pushing or proposing publication, run all three checks and confirm each exits clean:
    - `python3 -B tools/privacy/check.py --staged`
    - `python3 -B tools/privacy/check.py --worktree`
    - `python3 -B tools/privacy/check.py --metadata --history`
 3. For any package/artifact output path (for example, `artifacts/`, `out/`, `nupkg`, `zip`, `tar.gz`, or similar), run scanner with an explicit output scope and include that command in release notes/logs before it is uploaded.
 4. If any scan finds a hit, treat it as a blocker. Do not merge, amend, or push until the hit is removed and all three checks are rerun.
-5. This is a hard policy in addition to the Python checker: agents must also verify that private files are not introduced by name or path (`private`, `secret`, user home/workstation paths), and that symlinks and binary-like bundles do not include forbidden metadata.
+5. This is a hard policy in addition to the Python checker: contributors must also verify that private files are not introduced by name or path (`private`, `secret`, user home/workstation paths), and that symlinks and binary-like bundles do not include forbidden metadata.

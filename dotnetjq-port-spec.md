@@ -1,8 +1,7 @@
-# DotNetJq — AI-Driven, Source-Traceable .NET Reimplementation of jq/libjq
+# DotNetJq — Source-Traceable .NET Reimplementation of jq/libjq
 
-**Document type:** self-contained autonomous implementation specification and agent operating contract
-**Primary audience:** GPT-5.6 Sol running autonomously in Codex
-**Target:** a managed .NET implementation of jq's library semantics, optimized for source traceability, autonomous execution, and testable behavioral compatibility rather than a greenfield architectural redesign.
+**Document type:** technical implementation and compatibility specification
+**Target:** a managed .NET implementation of jq's library semantics, optimized for source traceability and testable behavioral compatibility rather than a greenfield architectural redesign.
 
 ---
 
@@ -14,7 +13,7 @@ The key design decision is:
 
 > **Preserve upstream jq file boundaries, symbol names, function names, and dependency relationships as closely as reasonably possible.**
 
-This is not because C-style architecture is inherently better than idiomatic C#. It is because this project is intended to be implemented and maintained primarily by AI coding agents. Direct structural correspondence dramatically reduces the context an agent needs to understand, port, debug, update, and verify each component.
+This is not because C-style architecture is inherently better than idiomatic C#. Direct structural correspondence makes each component easier to understand, port, debug, update, review, and verify.
 
 The implementation is **not required to be line-by-line C translated into C#**. Within a mapped method/function, normal C# language features may be used freely when they preserve behavior. The strictness is at the **structural and semantic correspondence level**, not the textual level.
 
@@ -31,46 +30,15 @@ same externally observable behavior
 ```
 
 
-## 0.1 Autonomous execution contract
+## 0.1 Implementation contract
 
-This document is intended to be sufficient for a coding agent to start and continue the project without routine human supervision.
+This document defines the technical work needed to implement, verify, and maintain the project consistently.
 
-### Required model configuration
-
-Run the lead Codex task with:
-
-```text
-Model: GPT-5.6 Sol
-Reasoning effort: xhigh
-```
-
-Official model reference:
-
-https://developers.openai.com/api/docs/models/gpt-5.6-sol
-
-GPT-5.6 Sol supports `none`, `low`, `medium`, `high`, `xhigh`, and `max` reasoning effort. For this project, **use `xhigh` for the entire autonomous run**.
-
-Do not assume the model can change its own reasoning-effort setting from instructions inside this file. Reasoning effort is configured by the host/request. Therefore:
-
-```text
-the host sets Sol xhigh once
-        ↓
-the agent remains on Sol xhigh
-        ↓
-the agent adapts effort internally while solving easy vs hard steps
-```
-
-Do not stop and ask a human to switch between `high`, `xhigh`, and `max`.
-
-If an external supervisor/orchestrator is later added, it may optionally retry exceptionally difficult residual failures with `max`, but **the project must not depend on that capability**.
-
-### Autonomous mission
-
-The agent's mission is:
+### Implementation objective
 
 > Reimplement the applicable jq/libjq behavior in managed .NET according to this specification, preserve direct upstream traceability, continuously run the official/differential tests, and continue until the Definition of Done is satisfied or a genuine external/environmental blocker makes further progress impossible.
 
-The agent MUST continue beyond the completion of any individual file or subsystem.
+Implementation must continue beyond the completion of any individual file or subsystem.
 
 The normal loop is:
 
@@ -102,7 +70,7 @@ select next unfinished work
 repeat
 ```
 
-### Do not ask routine questions
+### Routine implementation decisions
 
 Do **not** stop for questions such as:
 
@@ -139,7 +107,7 @@ A blocker is not merely:
 a test failed
 the code is difficult
 the first approach did not work
-the model is uncertain
+the implementation is uncertain
 ```
 
 Those are normal implementation work.
@@ -171,7 +139,7 @@ If a failure remains unresolved after several substantially different debugging 
 3. continue with independent work that is not blocked by it;
 4. periodically revisit blockers after adjacent subsystems improve.
 
-Only stop the overall autonomous run when:
+Work on the current milestone stops only when:
 
 - the Definition of Done is satisfied; or
 - the environment itself prevents further work (for example required repository/network/tool access is unavailable and no local workaround exists); or
@@ -179,7 +147,7 @@ Only stop the overall autonomous run when:
 
 ### Never trade correctness for a green build
 
-The agent must never:
+The implementation process must never:
 
 - delete or weaken an upstream compatibility test because it fails;
 - silently mark an unsupported feature as supported;
@@ -188,9 +156,9 @@ The agent must never:
 - remove difficult semantics merely to complete the task;
 - declare success based only on simple examples.
 
-### Context-minimization discipline
+### Local reasoning discipline
 
-The source-traceable architecture exists partly to make each autonomous task locally understandable.
+The source-traceable architecture exists partly to make each task locally understandable.
 
 Before loading large parts of the repository, prefer:
 
@@ -204,7 +172,7 @@ focused failing tests
 
 Only widen context when the local evidence is insufficient.
 
-This is a deliberate project optimization: **use source correspondence and executable tests instead of carrying a long narrative history in model context.**
+This is a deliberate project optimization: **use source correspondence and executable tests instead of requiring a long narrative history.**
 
 Any upstream component that is not directly ported must be explicitly categorized as:
 
@@ -248,7 +216,7 @@ https://github.com/jqlang/jq/releases
 
 The implementation MUST pin this exact upstream revision while parity is being established.
 
-Do not continuously port `master`. A moving upstream target makes autonomous compatibility work substantially harder to verify.
+Do not continuously port `master`. A moving upstream target makes compatibility work substantially harder to verify.
 
 ## 1.3 Recommended repository layout
 
@@ -320,9 +288,9 @@ Record the exact commit in the .NET repository as well.
 
 # 2. Why source-traceable architecture is mandatory
 
-This project is optimized for autonomous implementation.
+This project is optimized for maintainable, source-traceable implementation.
 
-A coding agent debugging `compile.c` should ideally need only:
+A contributor debugging `compile.c` should ideally need only:
 
 ```text
 upstream/src/compile.c
@@ -696,7 +664,7 @@ Do not assume `.NET decimal` is a drop-in replacement.
 
 Treat `decNumber`, dtoa, numeric representation, and printing as compatibility-sensitive.
 
-The implementation agent must:
+The implementation must:
 
 1. identify exact observable jq numeric behavior;
 2. run official numeric tests and differential tests;
@@ -808,7 +776,7 @@ The .NET parser/lexer implementation must:
 
 ## 7.2 Generator choice
 
-The implementation agent may choose a mature .NET lexer/parser generator or generate/maintain equivalent C# parser code.
+The project may use a mature .NET lexer/parser generator or generate and maintain equivalent C# parser code.
 
 The choice is secondary to compatibility.
 
@@ -868,7 +836,7 @@ Any .NET-vs-Oniguruma incompatibility must be:
 3. fixed in the adapter if feasible;
 4. explicitly recorded as an accepted incompatibility only if unavoidable.
 
-Use regex timeouts to prevent pathological model-generated reducers from creating unbounded work.
+Use regex timeouts to prevent pathological or untrusted reducers from creating unbounded work.
 
 ---
 
@@ -1008,7 +976,7 @@ Example:
 }
 ```
 
-Agents must update the manifest as part of the same commit/PR as the implementation change.
+Every implementation change must update the manifest in the same commit or pull request.
 
 A task is not complete until the manifest is current.
 
@@ -1018,7 +986,7 @@ A task is not complete until the manifest is current.
 
 The project must treat jq's tests as the primary semantic oracle.
 
-Do not rely on an agent saying:
+Do not rely on an unsupported assertion that:
 
 > "This looks equivalent."
 
@@ -1169,7 +1137,7 @@ Not allowed:
 
 ```text
 "hard to implement"
-"agent could not make it pass"
+"the test was difficult to make pass"
 "probably unimportant"
 ```
 
@@ -1268,9 +1236,9 @@ The public facade is not allowed to force redesign of port-core internals.
 
 ---
 
-# 15. AI implementation workflow
+# 15. Implementation workflow
 
-This is the required default workflow for an autonomous coding agent.
+This is the required default workflow for implementation work.
 
 ## Stage A — Bootstrap
 
@@ -1282,7 +1250,7 @@ This is the required default workflow for an autonomous coding agent.
 6. Create .NET solution/projects.
 7. Create test harness skeleton.
 8. Build official jq oracle.
-9. Verify upstream `make check` passes in the agent environment.
+9. Verify upstream `make check` passes in the development environment.
 10. Commit baseline.
 
 ## Stage B — Compatibility foundations
@@ -1332,7 +1300,7 @@ unless a concrete reason requires transformation.
 
 Port library-visible module/link semantics.
 
-Use a controlled .NET filesystem abstraction so the future MCP deployment can disable or constrain filesystem access without changing jq semantics internally.
+Use a controlled .NET filesystem abstraction so hosted deployments can disable or constrain filesystem access without changing jq semantics internally.
 
 ## Stage F — Regex
 
@@ -1366,9 +1334,9 @@ Do not make broad speculative rewrites in this phase.
 
 ---
 
-# 16. Agent task size
+# 16. Change scope
 
-Tasks should be local enough that the model can reason from source correspondence.
+Tasks should be local enough to reason about from direct source correspondence.
 
 Good task:
 
@@ -1388,7 +1356,7 @@ Good regression task:
 
 A replacement is allowed only behind a compatibility boundary.
 
-The agent must add a comment containing:
+The replacement must include a comment containing:
 
 ```text
 UPSTREAM COMPONENT
@@ -1434,7 +1402,7 @@ System.Text.RegularExpressions
 
 # 18. Comments and upstream links
 
-The project should be unusually rich in source-correspondence comments because that directly lowers future agent context requirements.
+The project should be unusually rich in source-correspondence comments because that directly lowers future maintenance and review costs.
 
 At function level, add a mapping comment when:
 
@@ -1517,7 +1485,7 @@ Do not significantly redesign jq evaluation in the initial port solely for bench
 
 After compatibility:
 
-1. benchmark representative MCP reducer workloads;
+1. benchmark representative hosted reducer workloads;
 2. profile allocations;
 3. optimize hot paths;
 4. preserve differential compatibility tests.
@@ -1535,9 +1503,9 @@ But parity is the first milestone.
 
 ---
 
-# 22. MCP-specific safety features to add after jq parity
+# 22. Host safety features to add after jq parity
 
-The library will ultimately execute AI-generated reducers.
+The library may execute dynamically generated or otherwise untrusted reducers.
 
 Therefore the public execution layer should eventually support hard limits independent of upstream jq's normal CLI assumptions.
 
@@ -1559,18 +1527,18 @@ new JqExecutionOptions
 
 These limits belong in a controlled execution layer and must not compromise ordinary jq compatibility when disabled/defaulted appropriately.
 
-The MCP integration should normally execute with restrictive limits.
+Host integrations should normally execute untrusted reducers with restrictive limits.
 
 ---
 
-# 23. Suggested AGENTS.md core rules
+# 23. Repository contributor rules
 
-The implementation repository should include a short mandatory `AGENTS.md`.
+The implementation repository should include short mandatory contributor rules.
 
 Suggested content:
 
 ```text
-# DotNetJq Agent Rules
+# DotNetJq Contributor Rules
 
 1. Upstream jq-1.8.2 commit 34f7186 is the semantic source of truth.
 2. Never redesign the compatibility core without an explicit task.
@@ -1592,124 +1560,16 @@ Suggested content:
 
 ---
 
-# 24. Autonomous OpenAI model configuration
+# 24. Parallelism and integration strategy
 
-## 24.1 Use GPT-5.6 Sol at `xhigh` for the entire lead run
-
-The user currently has GPT-5.6 Sol. That is sufficient for this project.
-
-Configure Codex:
-
-```text
-Model: GPT-5.6 Sol
-Reasoning effort: xhigh
-```
-
-Official model page:
-
-https://developers.openai.com/api/docs/models/gpt-5.6-sol
-
-OpenAI describes GPT-5.6 Sol as its flagship model for complex professional work and exposes reasoning-effort levels through `max`.
-
-For a fully autonomous run, prefer one stable `xhigh` configuration rather than trying to encode per-file reasoning-level changes in prompts.
-
-The model itself should **not** be instructed to switch reasoning modes; it cannot rely on changing host-level model configuration from inside the repository instructions.
-
-## 24.2 Why `xhigh` rather than `max` for the whole project
-
-This project contains both:
-
-```text
-very hard work:
-  jv semantics
-  parser/compiler
-  bytecode
-  execute.c
-  generator/backtracking behavior
-  numeric/path/update semantics
-
-and routine work:
-  direct helper ports
-  comments
-  manifest updates
-  fixture plumbing
-  straightforward regression fixes
-```
-
-Running everything at `max` is unnecessary for the autonomous default.
-
-`xhigh` gives the lead agent a high reasoning budget while still being suitable for long iterative build/test/fix loops.
-
-If a future external orchestrator is capable of retrying selected hard failures at `max`, that can be added as an optimization. It is **not** part of the required architecture.
-
-## 24.3 Autonomy is more important than dynamic reasoning selection
-
-The main reliability mechanisms are:
-
-```text
-pinned upstream source
-+
-1:1 file/function mapping
-+
-official jq tests
-+
-official jq differential oracle
-+
-strict manifest
-+
-continuous build/test/fix loop
-```
-
-These reduce ambiguity much more than dynamically changing reasoning effort would.
-
-The lead task should therefore remain alive and continue selecting work until the project reaches the Definition of Done.
-
-## 24.4 Use Codex, not a chat-only workflow
-
-The implementation agent must be able to:
-
-```text
-inspect files
-edit repository
-run build
-run tests
-execute official jq oracle
-inspect diffs
-search symbols
-update manifest
-iterate repeatedly
-```
-
-Use Codex or an equivalent repository-operating harness.
-
-## 24.5 Initial invocation
-
-A good initial instruction to the autonomous agent is intentionally short because this file is the source of truth:
-
-```text
-Implement this project autonomously according to the repository's
-dotnetjq autonomous implementation specification and AGENTS.md.
-
-Use the pinned jq upstream source and official tests as the semantic oracle.
-Preserve the required file/function mappings.
-Do not stop after an individual subsystem.
-Continue the port/build/test/fix/manifest loop until the Definition of Done
-is satisfied or a genuine external blocker makes further progress impossible.
-```
-
-Do not duplicate the whole specification in the launch prompt. The agent should read this file from the repository.
-
-
-# 25. Parallelism and subagent strategy
-
-A single autonomous **GPT-5.6 Sol `xhigh` lead agent** should own the project state and integration.
+A single lead maintainer should own the project state and integration.
 
 Parallel work is optional, not required.
 
-Do not initially launch many agents independently across interdependent core files. Stabilize foundations first:
+Do not initially split interdependent core files across independent changes. Stabilize foundations first:
 
 ```text
-lead Sol xhigh
+lead maintainer
    ↓
 bootstrap + manifest + test harness
    ↓
@@ -1722,7 +1582,7 @@ broad compatibility suite functioning
 optional parallel leaf work
 ```
 
-If the Codex environment supports subagents/worktrees, they may later be used for isolated areas such as:
+Independent contributors or worktrees may later be used for isolated areas such as:
 
 ```text
 Unicode / UTF-8
@@ -1736,18 +1596,18 @@ regression investigation
 
 Rules for parallel work:
 
-1. The lead agent remains the integration owner.
+1. The lead maintainer remains the integration owner.
 2. Each subtask receives a narrow mapped source scope.
 3. Each subtask must update its manifest entries.
 4. Each subtask runs focused tests before handoff.
-5. The lead agent reruns the broad compatibility suite after integration.
-6. Core semantic ownership must not become ambiguous across multiple agents.
+5. The lead maintainer reruns the broad compatibility suite after integration.
+6. Core semantic ownership must not become ambiguous across multiple contributors.
 7. Do not use parallelism merely to increase activity; use it only when dependencies are genuinely separable.
 
-A single Sol `xhigh` agent running continuously is an acceptable and preferred baseline.
+A sequential implementation remains an acceptable baseline.
 
 
-# 26. Definition of "done"
+# 25. Definition of "done"
 
 The project is NOT done when:
 
@@ -1769,11 +1629,11 @@ The initial compatibility milestone is done when:
 8. source/file/function traceability is preserved;
 9. public .NET API works independently of the upstream source checkout;
 10. licensing/notices are present;
-11. MCP-specific execution limits can be layered on without redesigning the evaluator.
+11. host execution limits can be layered on without redesigning the evaluator.
 
 ---
 
-# 27. Key external references
+# 26. Key external references
 
 ## jq
 
@@ -1809,29 +1669,15 @@ jq manual:
 
 https://jqlang.org/manual/
 
-## OpenAI / Codex
-
-GPT-5.6 Sol:
-
-https://developers.openai.com/api/docs/models/gpt-5.6-sol
-
-Current models:
-
-https://developers.openai.com/api/docs/models
-
-Codex:
-
-https://openai.com/codex/
-
 ---
 
-# 28. Final instruction to the implementation agent
+# 27. Final implementation principle
 
-Treat this project as a **behavior-preserving managed port executed autonomously**, not a redesign.
+Treat this project as a **behavior-preserving managed port**, not a redesign.
 
 The governing principle is:
 
-> When an agent opens a C# file, it should be immediately obvious which jq file and functions it corresponds to, what was ported, what was proxied, what was generated, what was omitted, and which tests establish equivalence.
+> When a contributor opens a C# file, it should be immediately obvious which jq file and functions it corresponds to, what was ported, what was proxied, what was generated, what was omitted, and which tests establish equivalence.
 
 When there is a choice between:
 
@@ -1852,7 +1698,7 @@ The project's main optimization target is not elegance of the first implementati
 It is:
 
 ```text
-minimal agent context
+minimal maintainer context
 +
 maximum upstream traceability
 +
