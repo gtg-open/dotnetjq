@@ -24,21 +24,45 @@ HOST = {"boot_sha256": "b" * 64, "github_run_id": "123", "github_run_attempt": "
 NAMES = (*report_output.IMPLEMENTATION_NAMES, *paired.BASELINE_NAMES)
 
 
-def attestation(name):
-    return {"deployment": name, "runtime": {"kind": name, "version": "10.0.11"}}
+def attestation(name, release=False):
+    if name == "framework-dotnetjq":
+        runtime = {"kind": "CoreCLR", "version": "10.0.12", "manifest_sha256": HASH}
+    else:
+        packages = [
+            {"id": package_id, "version": "10.0.11"}
+            for package_id in paired.provenance.NATIVE_AOT_PACKAGE_IDS
+        ]
+        runtime = {
+            "kind": "NativeAOT",
+            "target": "net10.0/linux-x64",
+            "packages_sha256": HASH,
+            "packages": packages,
+        }
+        if release:
+            runtime.update(
+                target="net10.0/linux-x64 release archive",
+                archive_sha256=HASH,
+                member_sha256=HASH,
+                project_assets_sha256=HASH,
+            )
+            for package in packages:
+                package["payload_sha256"] = HASH
+    return {"deployment": name, "runtime": runtime}
 
 
 def metadata(count):
-    proof = [attestation(name) for name in paired.DEPLOYMENTS]
+    baseline_proof = [attestation(name) for name in paired.DEPLOYMENTS]
+    candidate_proof = [attestation(name, release=True) for name in paired.DEPLOYMENTS]
     return {
         "scenario_count": count, "repetitions": 3, "startup_repetitions": 300,
         "pinned_jq_commit": gate.PINNED_JQ_COMMIT,
         "pinned_oracle_sha256": gate.PINNED_ORACLE_SHA256,
         "publication": {"mode": "publishable", "publishable": True,
-                        "complete_run": True, "attestations_required": True, "attestations": proof},
+                        "complete_run": True, "attestations_required": True,
+                        "attestations": candidate_proof},
         "paired_baseline": {"mode": paired.MODE, "commit": COMMIT,
                             "source": {"git_head": COMMIT, "git_dirty": False},
-                            "policy_sha256": HASH, "attestations": proof,
+                            "policy_sha256": HASH, "attestations": baseline_proof,
                             "host_session": HOST},
         "environment": {"set": {"LANG": "C"}, "preserved_runtime_roots": {}, "inherited_path": "/bin"},
         "implementations": [{"name": name, "executable_path": f"/subject/{name}",
@@ -98,6 +122,27 @@ class GateTests(unittest.TestCase):
         fixture["metadata"]["publication"]["attestations"][0]["runtime"]["version"] = "99.0"
         with self.assertRaises(gate.GateError):
             self.evaluate(fixture, macro)
+
+    def test_native_aot_toolchain_and_release_artifact_tampering_rejected(self):
+        for fault in (
+            "package-version", "packages-sha256", "archive-sha256",
+            "payload-sha256", "malformed-package",
+        ):
+            fixture, macro = reports()
+            for report in (fixture, macro):
+                runtime = report["metadata"]["publication"]["attestations"][1]["runtime"]
+                if fault == "package-version":
+                    runtime["packages"][0]["version"] = "99.0.0"
+                elif fault == "packages-sha256":
+                    runtime["packages_sha256"] = "b" * 64
+                elif fault == "archive-sha256":
+                    runtime["archive_sha256"] = "invalid"
+                elif fault == "malformed-package":
+                    runtime["packages"][-1] = None
+                else:
+                    runtime["packages"][0]["payload_sha256"] = "invalid"
+            with self.subTest(fault=fault), self.assertRaises(gate.GateError):
+                self.evaluate(fixture, macro)
 
     def test_old_three_subject_reports_cannot_authorize_release(self):
         fixture, macro = reports()
