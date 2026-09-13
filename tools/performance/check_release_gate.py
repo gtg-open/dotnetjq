@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import statistics
 from pathlib import Path
 from typing import Any
@@ -131,6 +132,62 @@ def check_ratio(
         )
 
 
+def runtime_toolchain_identity(
+    deployment: str, runtime: Any, label: str
+) -> dict[str, Any]:
+    if not isinstance(runtime, dict):
+        raise GateError(f"{label} {deployment} runtime identity is missing")
+    if deployment == "framework-dotnetjq":
+        if runtime.get("kind") != "CoreCLR":
+            raise GateError(f"{label} framework runtime is not CoreCLR")
+        version = runtime.get("version")
+        manifest = runtime.get("manifest_sha256")
+        if not isinstance(version, str) or not version:
+            raise GateError(f"{label} CoreCLR version is missing")
+        if re.fullmatch(r"[0-9a-f]{64}", str(manifest)) is None:
+            raise GateError(f"{label} CoreCLR manifest identity is invalid")
+        return {"kind": "CoreCLR", "version": version, "manifest_sha256": manifest}
+    if deployment != "aot-dotnetjq":
+        raise GateError(f"unexpected runtime deployment: {deployment}")
+    if runtime.get("kind") != "NativeAOT":
+        raise GateError(f"{label} AOT runtime is not NativeAOT")
+    target = runtime.get("target")
+    release_archive = target == "net10.0/linux-x64 release archive"
+    if target not in ("net10.0/linux-x64", "net10.0/linux-x64 release archive"):
+        raise GateError(f"{label} NativeAOT target identity is invalid")
+    packages_sha256 = runtime.get("packages_sha256")
+    if re.fullmatch(r"[0-9a-f]{64}", str(packages_sha256)) is None:
+        raise GateError(f"{label} NativeAOT package-set identity is invalid")
+    packages = runtime.get("packages")
+    expected_ids = list(paired_baseline.provenance.NATIVE_AOT_PACKAGE_IDS)
+    if (
+        not isinstance(packages, list)
+        or len(packages) != len(expected_ids)
+        or any(not isinstance(item, dict) for item in packages)
+        or [item.get("id") for item in packages] != expected_ids
+        or any(
+            not isinstance(item.get("version"), str) or not item["version"]
+            for item in packages
+        )
+    ):
+        raise GateError(f"{label} NativeAOT package inventory is invalid")
+    if release_archive:
+        for field in ("archive_sha256", "member_sha256", "project_assets_sha256"):
+            if re.fullmatch(r"[0-9a-f]{64}", str(runtime.get(field))) is None:
+                raise GateError(f"{label} NativeAOT release {field} is invalid")
+        if any(
+            re.fullmatch(r"[0-9a-f]{64}", str(item.get("payload_sha256"))) is None
+            for item in packages
+        ):
+            raise GateError(f"{label} NativeAOT release package payload identity is invalid")
+    return {
+        "kind": "NativeAOT",
+        "target": "net10.0/linux-x64",
+        "packages_sha256": packages_sha256,
+        "packages": [{"id": item["id"], "version": item["version"]} for item in packages],
+    }
+
+
 def require_pair(fixture: dict, macro: dict, thresholds: dict, policy_sha256: str) -> None:
     if thresholds.get("schema_version") != 2:
         raise GateError("same-runner release threshold schema must be 2")
@@ -148,11 +205,25 @@ def require_pair(fixture: dict, macro: dict, thresholds: dict, policy_sha256: st
             raise GateError("report uses a different performance policy")
         if baseline.get("host_session") != paired_baseline.host_session():
             raise GateError("reports were not measured in this host/job session")
-        candidates = report["metadata"]["publication"]["attestations"]
-        expected_runtimes = {item["deployment"]: item.get("runtime") for item in baseline["attestations"]}
-        if any(not item.get("runtime") or item["runtime"] != expected_runtimes.get(item["deployment"])
-               for item in candidates):
-            raise GateError("baseline/candidate runtime identities differ")
+        candidates = {
+            item["deployment"]: item.get("runtime")
+            for item in report["metadata"]["publication"]["attestations"]
+        }
+        expected_runtimes = {
+            item["deployment"]: item.get("runtime")
+            for item in baseline["attestations"]
+        }
+        if set(candidates) != set(paired_baseline.DEPLOYMENTS):
+            raise GateError("candidate runtime inventory is incomplete")
+        for deployment in paired_baseline.DEPLOYMENTS:
+            expected = runtime_toolchain_identity(
+                deployment, expected_runtimes.get(deployment), "baseline"
+            )
+            actual = runtime_toolchain_identity(
+                deployment, candidates.get(deployment), "candidate"
+            )
+            if actual != expected:
+                raise GateError("baseline/candidate runtime identities differ")
     for field in ("source_identity", "toolchain_identity", "framework_runtime"):
         if fixture["metadata"].get(field) != macro["metadata"].get(field):
             raise GateError(f"fixture/macro {field} identity differs")

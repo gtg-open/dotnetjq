@@ -307,6 +307,11 @@ and gate log. Historical runs are never substituted for current measurements.
 
 Both source commits, clean source snapshots, build attestations, runtime and
 binary identities, policy hash, CPU affinity, and host/job identity are checked.
+The NativeAOT baseline and release archive use different attestation envelopes:
+the gate compares their normalized target and exact package-set digest plus
+package ID/version inventory, while independently requiring every release-only
+archive, executable, project-assets, and package-payload digest. Extra
+release-artifact identity fields are not mistaken for a different runtime.
 The gate verifies certified report hashes/CSV inventories and recomputes its
 metrics from raw samples. Missing baseline subjects, incomplete measurements,
 mixed-machine/job reports, tampered summaries, or a real slowdown fail closed.
