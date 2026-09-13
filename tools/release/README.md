@@ -348,15 +348,20 @@ and ambiguous remote state stop publication.
 
 The WinGet validator checks the **submitted** byte format from pinned
 WingetCreate 1.12.13.0: the producer comment comes first, the exact per-manifest
-schema comment second, then a blank line; line endings are CRLF. The checked-in
-templates themselves remain LF-only. A pre-release pipeline run exposed an old
-validator assumption that the template's schema comment would still be the
-first submitted line. `test-winget-manifest-canonicalization.py` now feeds the
-actual canonicalizer output into the complete Ruby YAML/hash validator and
-rejects altered producer/schema headers, line endings, duplicate keys,
-identities, URLs, archive hashes, and installer structure. This test runs in the
-full semantic gate on GitHub, with Ruby explicitly installed; no jq library or
-CLI execution behavior is changed.
+schema comment second, then a blank line; line endings are CRLF. Installer URL
+and checksum properties follow the nested portable-file properties in the
+serializer's property order. The checked-in templates remain LF-only. The
+canonicalizer accepts either a template or the exact output of the same pinned
+serializer, making normalization idempotent. The downstream recovery workflow
+therefore safely normalizes an older immutable release manifest before remote
+PR comparison without changing any manifest value. A pre-release pipeline run
+exposed an old validator assumption that the template's schema comment would
+still be the first submitted line. `test-winget-manifest-canonicalization.py`
+feeds the actual canonicalizer output into the complete Ruby YAML/hash
+validator and rejects altered producer/schema headers, line endings, duplicate
+keys, identities, URLs, archive hashes, and installer structure. This test runs
+in the full semantic gate on GitHub, with Ruby explicitly installed; no jq
+library or CLI execution behavior is changed.
 
 `verify-github-release-assets.py` can also populate a new output directory with
 all 27 assets from an exact published immutable release. It validates release

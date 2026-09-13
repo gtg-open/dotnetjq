@@ -130,7 +130,10 @@ token creation explicitly requests Contents and Pull requests write access for
 the configured tap; GitHub rejects token creation if the app installation does
 not grant those permissions. The tap is still changed only through a reviewable
 pull request. WinGet retains its exact-token-identity and `public_repo`-only
-scope checks and verifies the submitted pull request byte-for-byte.
+scope checks and verifies the submitted pull request byte-for-byte. Before that
+comparison, the job idempotently normalizes the immutable release manifests to
+the exact property order and CRLF representation emitted by the pinned
+WingetCreate version; manifest values are unchanged.
 
 Never move a published tag, replace an asset, or reuse a package version. A
 retry preflights all ten exact NuGet ID/version pairs. It skips a present package
