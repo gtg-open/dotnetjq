@@ -172,32 +172,39 @@ class ProbeTests(unittest.TestCase):
         return result
 
     def run_verifier(
-        self, *, api_url: str | None = None, state: str = "draft"
+        self,
+        *,
+        api_url: str | None = None,
+        state: str = "draft",
+        download: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment["GITHUB_TOKEN"] = TOKEN
         environment["DOTNETJQ_RELEASE_TEST_MODE"] = "1"
+        command = [
+            "python3",
+            str(VERIFIER),
+            "--repository",
+            REPOSITORY,
+            "--tag",
+            TAG,
+            "--name",
+            NAME,
+            "--body-file",
+            str(self.body_file),
+            "--state",
+            state,
+            "--prerelease",
+            "false",
+            "--api-url",
+            api_url or self.api.url,
+        ]
+        if download:
+            command.extend(["--download-to", str(self.root / "downloaded")])
+        else:
+            command.extend(["--artifacts", str(self.artifacts)])
         return subprocess.run(
-            [
-                "python3",
-                str(VERIFIER),
-                "--repository",
-                REPOSITORY,
-                "--tag",
-                TAG,
-                "--name",
-                NAME,
-                "--body-file",
-                str(self.body_file),
-                "--artifacts",
-                str(self.artifacts),
-                "--state",
-                state,
-                "--prerelease",
-                "false",
-                "--api-url",
-                api_url or self.api.url,
-            ],
+            command,
             check=False,
             capture_output=True,
             text=True,
@@ -226,6 +233,32 @@ class ProbeTests(unittest.TestCase):
         result = self.run_verifier(state="published")
         self.assertEqual(result.returncode, 1)
         self.assertIn("published release v1.0.0 is not immutable", result.stderr)
+
+    def test_post_publication_verifier_downloads_exact_release(self) -> None:
+        self.api.releases = [self.release(draft=False)]
+        result = self.run_verifier(state="published", download=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        downloaded = self.root / "downloaded"
+        self.assertEqual(
+            {path.name: path.read_bytes() for path in downloaded.iterdir()},
+            self.contents,
+        )
+
+    def test_download_rejects_existing_destination(self) -> None:
+        self.api.releases = [self.release(draft=False)]
+        (self.root / "downloaded").mkdir()
+        result = self.run_verifier(state="published", download=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("download directory already exists", result.stderr)
+
+    def test_download_rejects_unsafe_asset_name(self) -> None:
+        release = self.release(draft=False)
+        release["assets"][0]["name"] = "../escape"  # type: ignore[index]
+        self.api.releases = [release]
+        result = self.run_verifier(state="published", download=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unsafe asset name", result.stderr)
+        self.assertFalse((self.root / "escape").exists())
 
     def test_non_loopback_http_api_is_rejected_before_token_transport(self) -> None:
         result = self.run_probe(api_url="http://example.com")

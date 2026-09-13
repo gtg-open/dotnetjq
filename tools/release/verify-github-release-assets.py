@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that one GitHub release exactly matches a local release bundle."""
+"""Verify or safely download one exact GitHub release bundle."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -89,6 +91,59 @@ def download_sha256(url: str, token: str) -> str:
     return digest.hexdigest()
 
 
+def download_release_assets(
+    assets: dict[str, dict[str, object]], directory: Path, token: str
+) -> None:
+    """Download one immutable release inventory without overwriting local data."""
+
+    if directory.exists() or directory.is_symlink():
+        raise VerificationError(f"download directory already exists: {directory}")
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(
+        tempfile.mkdtemp(
+            prefix=".dotnetjq-release-assets-", dir=str(directory.parent)
+        )
+    )
+    try:
+        for name in sorted(assets):
+            asset = assets[name]
+            asset_url = asset["url"]
+            expected_size = asset["size"]
+            assert isinstance(asset_url, str)
+            assert isinstance(expected_size, int)
+            request = urllib.request.Request(
+                asset_url,
+                headers={
+                    "Accept": "application/octet-stream",
+                    "Authorization": f"Bearer {token}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "dotnetjq-release-verifier",
+                },
+            )
+            destination = temporary / name
+            written = 0
+            opener = urllib.request.build_opener(SafeRedirectHandler())
+            try:
+                with opener.open(request, timeout=120) as response, destination.open(
+                    "xb"
+                ) as stream:
+                    while chunk := response.read(1024 * 1024):
+                        stream.write(chunk)
+                        written += len(chunk)
+            except (OSError, urllib.error.HTTPError) as error:
+                raise VerificationError(
+                    f"release asset download failed: {name}: {error}"
+                ) from error
+            if written != expected_size:
+                raise VerificationError(
+                    f"release asset size changed while downloading: {name}"
+                )
+        temporary.rename(directory)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+
+
 def local_assets(directory: Path) -> dict[str, Path]:
     if not directory.is_dir():
         raise VerificationError(f"artifact directory does not exist: {directory}")
@@ -117,6 +172,62 @@ def local_release_body(path: Path) -> str:
         return payload.decode("utf-8")
     except UnicodeDecodeError as error:
         raise VerificationError("release body is not valid UTF-8") from error
+
+
+def remote_assets(
+    release: dict[str, object], api_url: str, repository: str
+) -> dict[str, dict[str, object]]:
+    payload = release.get("assets")
+    if not isinstance(payload, list):
+        raise VerificationError("release asset inventory is missing")
+    if len(payload) != 27:
+        raise VerificationError(
+            f"expected exactly 27 remote release assets; found {len(payload)}"
+        )
+
+    api_origin = urllib.parse.urlsplit(api_url)
+    encoded_repository = "/".join(
+        urllib.parse.quote(part, safe="") for part in repository.split("/")
+    )
+    expected_path_prefix = (
+        f"{api_origin.path.rstrip('/')}/repos/{encoded_repository}/releases/assets/"
+    )
+    result: dict[str, dict[str, object]] = {}
+    for asset in payload:
+        if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
+            raise VerificationError("release contains malformed asset metadata")
+        name = asset["name"]
+        if (
+            not name
+            or Path(name).name != name
+            or "\\" in name
+            or name in {".", ".."}
+            or "\x00" in name
+        ):
+            raise VerificationError("release contains an unsafe asset name")
+        if name in result:
+            raise VerificationError(f"release contains duplicate asset name: {name}")
+        if asset.get("state") != "uploaded":
+            raise VerificationError(f"release asset is not fully uploaded: {name}")
+        size = asset.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise VerificationError(f"release asset size is invalid: {name}")
+        asset_url = asset.get("url")
+        if not isinstance(asset_url, str):
+            raise VerificationError(f"release asset API URL is invalid: {name}")
+        parsed_asset_url = urllib.parse.urlsplit(asset_url)
+        if (
+            (parsed_asset_url.scheme, parsed_asset_url.netloc)
+            != (api_origin.scheme, api_origin.netloc)
+            or not parsed_asset_url.path.startswith(expected_path_prefix)
+            or parsed_asset_url.query
+            or parsed_asset_url.fragment
+            or parsed_asset_url.username
+            or parsed_asset_url.password
+        ):
+            raise VerificationError(f"release asset API URL is invalid: {name}")
+        result[name] = asset
+    return result
 
 
 def find_release(api_url: str, repository: str, tag: str, token: str) -> dict[str, object]:
@@ -166,7 +277,9 @@ def main() -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--body-file", type=Path, required=True)
-    parser.add_argument("--artifacts", type=Path, required=True)
+    artifacts = parser.add_mutually_exclusive_group(required=True)
+    artifacts.add_argument("--artifacts", type=Path)
+    artifacts.add_argument("--download-to", type=Path)
     parser.add_argument("--state", choices=("draft", "published"), required=True)
     parser.add_argument("--prerelease", choices=("true", "false"), required=True)
     parser.add_argument("--api-url", default="https://api.github.com")
@@ -181,7 +294,6 @@ def main() -> int:
         raise VerificationError("GITHUB_TOKEN is required")
 
     api_url = validate_api_url(args.api_url)
-    local = local_assets(args.artifacts)
     body = local_release_body(args.body_file)
     release = find_release(api_url, args.repository, args.tag, token)
     expected_draft = args.state == "draft"
@@ -201,48 +313,27 @@ def main() -> int:
     if not expected_draft and release["immutable"] is not True:
         raise VerificationError(f"published release {args.tag} is not immutable")
 
-    remote_assets = release.get("assets")
-    if not isinstance(remote_assets, list):
-        raise VerificationError("release asset inventory is missing")
-    remote_by_name: dict[str, dict[str, object]] = {}
-    for asset in remote_assets:
-        if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
-            raise VerificationError("release contains malformed asset metadata")
-        name = asset["name"]
-        if name in remote_by_name:
-            raise VerificationError(f"release contains duplicate asset name: {name}")
-        remote_by_name[name] = asset
+    remote_by_name = remote_assets(release, api_url, args.repository)
+    artifact_directory = args.artifacts
+    if args.download_to is not None:
+        download_release_assets(remote_by_name, args.download_to, token)
+        artifact_directory = args.download_to
+    assert artifact_directory is not None
+    local = local_assets(artifact_directory)
     if set(remote_by_name) != set(local):
         missing = sorted(set(local) - set(remote_by_name))
         extra = sorted(set(remote_by_name) - set(local))
-        raise VerificationError(f"release asset inventory differs; missing={missing}, extra={extra}")
+        raise VerificationError(
+            f"release asset inventory differs; missing={missing}, extra={extra}"
+        )
 
-    api_origin = urllib.parse.urlsplit(api_url)
-    encoded_repository = "/".join(
-        urllib.parse.quote(part, safe="") for part in args.repository.split("/")
-    )
-    expected_path_prefix = (
-        f"{api_origin.path.rstrip('/')}/repos/{encoded_repository}/releases/assets/"
-    )
     for name in sorted(local):
         local_path = local[name]
         asset = remote_by_name[name]
         if asset.get("size") != local_path.stat().st_size:
             raise VerificationError(f"release asset size differs: {name}")
         asset_url = asset.get("url")
-        if not isinstance(asset_url, str):
-            raise VerificationError(f"release asset API URL is invalid: {name}")
-        parsed_asset_url = urllib.parse.urlsplit(asset_url)
-        if (
-            (parsed_asset_url.scheme, parsed_asset_url.netloc)
-            != (api_origin.scheme, api_origin.netloc)
-            or not parsed_asset_url.path.startswith(expected_path_prefix)
-            or parsed_asset_url.query
-            or parsed_asset_url.fragment
-            or parsed_asset_url.username
-            or parsed_asset_url.password
-        ):
-            raise VerificationError(f"release asset API URL is invalid: {name}")
+        assert isinstance(asset_url, str)
         local_digest = hashlib.sha256(local_path.read_bytes()).hexdigest()
         remote_digest = download_sha256(asset_url, token)
         if remote_digest != local_digest:

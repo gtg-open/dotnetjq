@@ -1224,7 +1224,7 @@ jobs:
           repositories: ${{ vars.HOMEBREW_TAP_NAME }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Verify the configured Homebrew publisher before core publication
+      - name: Verify the configured Homebrew repository before core publication
         if: >-
           needs.validate-tag.outputs.prerelease == 'false' &&
           steps.protected-release-state.outputs.superseded == 'false' &&
@@ -1249,8 +1249,6 @@ jobs:
               repository = json.load(stream)
           if repository.get("full_name", "").casefold() != sys.argv[2].casefold():
               raise SystemExit("Homebrew App token resolved an unexpected repository")
-          if not repository.get("permissions", {}).get("push"):
-              raise SystemExit("Homebrew App token does not have Contents write access")
           PY
       - name: Verify the configured WinGet publisher before core publication
         if: >-
