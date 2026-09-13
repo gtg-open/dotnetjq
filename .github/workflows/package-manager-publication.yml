@@ -155,7 +155,7 @@ jobs:
           mkdir -p artifacts/package-managers
           cp artifacts/bundle/dotnetjq.rb artifacts/package-managers/
           for manifest in artifacts/bundle/GtGOpen.DotNetJq*.yaml; do
-            python3 -B tools/release/canonicalize-winget-manifest.py \
+            python3 -B automation/tools/release/canonicalize-winget-manifest.py \
               --input "$manifest" \
               --output "artifacts/package-managers/$(basename -- "$manifest")"
           done

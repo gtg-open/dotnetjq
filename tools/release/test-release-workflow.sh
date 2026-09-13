@@ -484,7 +484,7 @@ job_contains validate 'source/tools/release/probe-github-release.py' ||
   release_die 'package-manager recovery must classify the exact published release'
 job_contains validate 'test "$SUPERSEDED" = false' ||
   release_die 'package-manager recovery must reject an older superseded stable release'
-job_contains_in_order validate 'canonicalize-winget-manifest.py' 'upload-artifact@' ||
+job_contains_in_order validate 'automation/tools/release/canonicalize-winget-manifest.py' 'upload-artifact@' ||
   release_die 'package-manager recovery must normalize immutable WinGet manifests before preserving metadata'
 job_contains homebrew 'permission-contents: write' ||
   release_die 'Homebrew recovery token must request Contents write'
