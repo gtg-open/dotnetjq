@@ -64,19 +64,19 @@ PackageVersion: 1.0.0
 InstallerType: zip
 Installers:
 - Architecture: x64
+  NestedInstallerType: portable
+  NestedInstallerFiles:
+  - RelativeFilePath: dotnetjq.exe
+    PortableCommandAlias: dotnetjq
   InstallerUrl: https://example.invalid/dotnetjq-win-x64.zip
   InstallerSha256: {sha_x64}
+- Architecture: arm64
   NestedInstallerType: portable
   NestedInstallerFiles:
   - RelativeFilePath: dotnetjq.exe
     PortableCommandAlias: dotnetjq
-- Architecture: arm64
   InstallerUrl: https://example.invalid/dotnetjq-win-arm64.zip
   InstallerSha256: {sha_arm64}
-  NestedInstallerType: portable
-  NestedInstallerFiles:
-  - RelativeFilePath: dotnetjq.exe
-    PortableCommandAlias: dotnetjq
 ManifestType: installer
 ManifestVersion: 1.10.0
 """,
@@ -107,10 +107,45 @@ ManifestVersion: 1.10.0
         }
         for template, (replacements, expected) in cases.items():
             with self.subTest(template=template):
+                actual = render(template, replacements)
                 self.assertEqual(
                     expected.replace("\n", "\r\n").encode("utf-8"),
-                    render(template, replacements),
+                    actual,
                 )
+                self.assertEqual(actual, CANONICALIZER.canonical_bytes(actual))
+
+    def test_v1_release_installer_order_is_reserialized_idempotently(self) -> None:
+        sha_x64 = "A" * 64
+        legacy = f"""# Created using wingetcreate 1.12.13.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+PackageIdentifier: GtGOpen.DotNetJq
+PackageVersion: 1.0.0
+InstallerType: zip
+Installers:
+- Architecture: x64
+  InstallerUrl: https://example.invalid/dotnetjq-win-x64.zip
+  InstallerSha256: {sha_x64}
+  NestedInstallerType: portable
+  NestedInstallerFiles:
+  - RelativeFilePath: dotnetjq.exe
+    PortableCommandAlias: dotnetjq
+ManifestType: installer
+ManifestVersion: 1.10.0
+""".replace("\n", "\r\n").encode("utf-8")
+        actual = CANONICALIZER.canonical_bytes(legacy)
+        self.assertIn(
+            (
+                "  NestedInstallerType: portable\r\n"
+                "  NestedInstallerFiles:\r\n"
+                "  - RelativeFilePath: dotnetjq.exe\r\n"
+                "    PortableCommandAlias: dotnetjq\r\n"
+                "  InstallerUrl: https://example.invalid/dotnetjq-win-x64.zip\r\n"
+                f"  InstallerSha256: {sha_x64}\r\n"
+            ).encode("utf-8"),
+            actual,
+        )
+        self.assertEqual(actual, CANONICALIZER.canonical_bytes(actual))
 
     def test_noncanonical_template_framing_is_rejected(self) -> None:
         with self.assertRaises(CANONICALIZER.CanonicalizationError):
@@ -118,6 +153,12 @@ ManifestVersion: 1.10.0
         with self.assertRaises(CANONICALIZER.CanonicalizationError):
             CANONICALIZER.canonical_bytes(
                 b"# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json\r\n"
+            )
+        with self.assertRaises(CANONICALIZER.CanonicalizationError):
+            CANONICALIZER.canonical_bytes(
+                b"# Created using wingetcreate 1.12.12.0\r\n"
+                b"# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json\r\n"
+                b"\r\nPackageIdentifier: Example.Bad\r\n"
             )
 
 

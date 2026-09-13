@@ -149,12 +149,16 @@ jobs:
           RELEASE_STATE: ${{ steps.published-release.outputs.state }}
           SUPERSEDED: ${{ steps.published-release.outputs.superseded }}
         run: test "$RELEASE_STATE" = published && test "$SUPERSEDED" = false
-      - name: Select the verified package-manager metadata
+      - name: Select and normalize the verified package-manager metadata
         shell: bash
         run: |
           mkdir -p artifacts/package-managers
           cp artifacts/bundle/dotnetjq.rb artifacts/package-managers/
-          cp artifacts/bundle/GtGOpen.DotNetJq*.yaml artifacts/package-managers/
+          for manifest in artifacts/bundle/GtGOpen.DotNetJq*.yaml; do
+            python3 -B tools/release/canonicalize-winget-manifest.py \
+              --input "$manifest" \
+              --output "artifacts/package-managers/$(basename -- "$manifest")"
+          done
       - name: Inspect the exact selected package-manager metadata
         shell: bash
         run: >-
