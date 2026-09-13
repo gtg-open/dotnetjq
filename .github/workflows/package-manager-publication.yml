@@ -1,0 +1,436 @@
+name: Publish an immutable release to package managers
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable stable release tag to publish, for example v1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dotnetjq-release-publication
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  RELEASE_AUTHORS: GtG Open Maintainer
+  WINGET_PUBLISHER: GtG Open
+  WINGET_PACKAGE_ID: GtGOpen.DotNetJq
+
+jobs:
+  validate:
+    name: Reverify the immutable stable release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      commit: ${{ steps.release-tag.outputs.commit }}
+      tag: ${{ inputs.tag }}
+      version: ${{ steps.release-tag.outputs.version }}
+    steps:
+      - name: Check out the reviewed recovery automation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: automation
+      - name: Inspect automation source and reachable history for private data
+        shell: bash
+        run: python3 -B automation/tools/privacy/check.py --repo automation --history
+      - name: Check out the immutable release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - name: Inspect release source and reachable history for private data
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --history
+      - name: Validate the remote release tag
+        id: release-tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        working-directory: source
+        run: >-
+          bash tools/release/assert-release-tag.sh --tag "$RELEASE_TAG"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Require a stable release
+        shell: bash
+        env:
+          PRERELEASE: ${{ steps.release-tag.outputs.prerelease }}
+        run: test "$PRERELEASE" = false
+      - name: Generate the deterministic release body
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ steps.release-tag.outputs.version }}
+        run: >-
+          bash source/tools/release/generate-release-notes.sh
+          --version "$RELEASE_VERSION"
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$RELEASE_TAG"
+          --output "$RUNNER_TEMP/dotnetjq-release-notes.md"
+      - name: Inspect the exact release body before download
+        shell: bash
+        run: >-
+          python3 -B source/tools/privacy/check.py --repo source --metadata
+          --github-hosted --output "$RUNNER_TEMP/dotnetjq-release-notes.md"
+      - name: Download and verify every immutable GitHub release asset
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ steps.release-tag.outputs.version }}
+        run: >-
+          python3 automation/tools/release/verify-github-release-assets.py
+          --repository "$GITHUB_REPOSITORY"
+          --tag "$RELEASE_TAG"
+          --name "DotNetJq $RELEASE_VERSION — jq 1.8.2 compatible"
+          --body-file "$RUNNER_TEMP/dotnetjq-release-notes.md"
+          --download-to artifacts/bundle
+          --state published
+          --prerelease false
+      - name: Inspect downloaded publication inputs for private data
+        shell: bash
+        run: >-
+          python3 -B source/tools/privacy/check.py --repo source --metadata
+          --github-hosted --output artifacts/bundle
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: source/global.json
+      - name: Install bundle verification prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes file ruby unzip
+      - name: Reverify the complete published release bundle
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ steps.release-tag.outputs.version }}
+        run: |
+          bash source/tools/release/verify-release-bundle.sh \
+            --version "$RELEASE_VERSION" \
+            --artifacts artifacts/bundle \
+            --package-id dotnetjq \
+            --library-package-id DotNetJq.Library \
+            --proof artifacts/bundle/aot-relink-proof.txt \
+            --proof-rid linux-x64 \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --authors "$RELEASE_AUTHORS" \
+            --publisher "$WINGET_PUBLISHER" \
+            --winget-package-id "$WINGET_PACKAGE_ID"
+      - name: Reject a missing, changed, or superseded release
+        id: published-release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ steps.release-tag.outputs.version }}
+        run: |
+          python3 source/tools/release/probe-github-release.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --name "DotNetJq $RELEASE_VERSION — jq 1.8.2 compatible" \
+            --body-file "$RUNNER_TEMP/dotnetjq-release-notes.md" \
+            --artifacts artifacts/bundle \
+            --prerelease false \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Require the current exact published stable release
+        shell: bash
+        env:
+          RELEASE_STATE: ${{ steps.published-release.outputs.state }}
+          SUPERSEDED: ${{ steps.published-release.outputs.superseded }}
+        run: test "$RELEASE_STATE" = published && test "$SUPERSEDED" = false
+      - name: Select the verified package-manager metadata
+        shell: bash
+        run: |
+          mkdir -p artifacts/package-managers
+          cp artifacts/bundle/dotnetjq.rb artifacts/package-managers/
+          cp artifacts/bundle/GtGOpen.DotNetJq*.yaml artifacts/package-managers/
+      - name: Inspect the exact selected package-manager metadata
+        shell: bash
+        run: >-
+          python3 -B source/tools/privacy/check.py --repo source --metadata
+          --github-hosted --output artifacts/package-managers
+      - name: Preserve the exact verified package-manager metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-manager-metadata
+          path: artifacts/package-managers
+          if-no-files-found: error
+          retention-days: 1
+
+  homebrew:
+    name: Open the Homebrew tap update
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the immutable release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - name: Inspect release source and reachable history for private data
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --history
+      - name: Create a least-privilege tap token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: ${{ vars.HOMEBREW_TAP_OWNER }}
+          repositories: ${{ vars.HOMEBREW_TAP_NAME }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Check out the configured tap with the installation token
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ vars.HOMEBREW_TAP_OWNER }}/${{ vars.HOMEBREW_TAP_NAME }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+          persist-credentials: false
+      - name: Download the verified package-manager metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-manager-metadata
+          path: artifacts/package-managers
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: >-
+          python3 -B source/tools/privacy/check.py --repo source --metadata
+          --github-hosted --output artifacts/package-managers
+      - name: Classify the current tap formula without allowing a downgrade
+        id: homebrew-formula
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          state=$(python3 source/tools/release/classify-homebrew-formula.py \
+            --current tap/Formula/dotnetjq.rb \
+            --candidate artifacts/package-managers/dotnetjq.rb \
+            --version "$RELEASE_VERSION")
+          echo "state=$state" >>"$GITHUB_OUTPUT"
+      - name: Stage the verified formula
+        if: startsWith(steps.homebrew-formula.outputs.state, 'publish:')
+        shell: bash
+        run: |
+          mkdir -p tap/Formula
+          cp artifacts/package-managers/dotnetjq.rb tap/Formula/dotnetjq.rb
+      - name: Inspect the exact staged Homebrew formula
+        if: startsWith(steps.homebrew-formula.outputs.state, 'publish:')
+        shell: bash
+        run: >-
+          python3 -B source/tools/privacy/check.py --repo source --metadata
+          --github-hosted --output tap/Formula/dotnetjq.rb
+      - name: Revalidate the immutable release tag before mutation
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        working-directory: source
+        run: >-
+          bash tools/release/assert-release-tag.sh --tag "$RELEASE_TAG"
+          --expected-commit "$RELEASE_COMMIT"
+      - name: Open a reviewable tap pull request
+        if: startsWith(steps.homebrew-formula.outputs.state, 'publish:')
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+          branch: release/dotnetjq-${{ needs.validate.outputs.version }}
+          delete-branch: true
+          commit-message: Update dotnetjq to ${{ needs.validate.outputs.version }}
+          title: Update dotnetjq to ${{ needs.validate.outputs.version }}
+          body: Generated from the verified DotNetJq ${{ needs.validate.outputs.version }} release bundle.
+      - name: Report an already current or superseded tap formula
+        if: startsWith(steps.homebrew-formula.outputs.state, 'skip:')
+        shell: bash
+        run: echo "Homebrew formula state is $FORMULA_STATE; no pull request is needed."
+        env:
+          FORMULA_STATE: ${{ steps.homebrew-formula.outputs.state }}
+
+  winget:
+    name: Submit the WinGet manifests
+    needs: validate
+    runs-on: windows-2025
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the immutable release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - name: Inspect release source and reachable history for private data
+        shell: bash
+        run: python3 -B source/tools/privacy/check.py --repo source --history
+      - name: Download the verified package-manager metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package-manager-metadata
+          path: artifacts/package-managers
+      - name: Reinspect downloaded publication inputs for private data
+        shell: bash
+        run: >-
+          python3 -B source/tools/privacy/check.py --repo source --metadata
+          --github-hosted --output artifacts/package-managers
+      - name: Prepare the exact stable manifests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts/winget | Out-Null
+          Copy-Item artifacts/package-managers/GtGOpen.DotNetJq*.yaml artifacts/winget/
+      - name: Inspect the exact WinGet submission files
+        shell: bash
+        run: >-
+          python3 -B source/tools/privacy/check.py --repo source --metadata
+          --github-hosted --output artifacts/winget
+      - name: Verify the dedicated WinGet publisher token
+        shell: bash
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          headers="$RUNNER_TEMP/winget-token.headers"
+          response="$RUNNER_TEMP/winget-token.json"
+          curl --fail --silent --show-error \
+            --dump-header "$headers" \
+            --header "Authorization: Bearer $WINGET_CREATE_GITHUB_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/user" \
+            --output "$response"
+          python3 - "$response" "$headers" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              user = json.load(stream)
+          if user.get("login", "").casefold() != "gtg-open-maintainer":
+              raise SystemExit("WinGet token belongs to an unexpected GitHub account")
+          with open(sys.argv[2], encoding="iso-8859-1") as stream:
+              scope_lines = [
+                  line.split(":", 1)[1].strip()
+                  for line in stream
+                  if line.casefold().startswith("x-oauth-scopes:")
+              ]
+          if len(scope_lines) != 1:
+              raise SystemExit("WinGet token response has no unique OAuth scope header")
+          scopes = {value.strip() for value in scope_lines[0].split(",") if value.strip()}
+          if scopes != {"public_repo"}:
+              raise SystemExit(
+                  "WinGet token must grant exactly public_repo and no broader scope"
+              )
+          PY
+      - name: Classify an existing exact WinGet submission
+        id: winget-pr
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          python source/tools/release/probe-winget-pull-request.py `
+            --package-id "$env:WINGET_PACKAGE_ID" `
+            --version '${{ needs.validate.outputs.version }}' `
+            --manifests artifacts/winget `
+            --pr-title 'DotNetJq ${{ needs.validate.outputs.version }}' `
+            --github-output "$env:GITHUB_OUTPUT"
+      - name: Download and verify WingetCreate 1.12.13.0
+        if: steps.winget-pr.outputs.state == 'missing'
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/microsoft/winget-create/releases/download/v1.12.13.0/wingetcreate.exe'
+          Invoke-WebRequest -Uri $url -OutFile wingetcreate.exe
+          $actual = (Get-FileHash .\wingetcreate.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea'
+          if ($actual -ne $expected) {
+            throw "WingetCreate checksum mismatch: $actual"
+          }
+      - name: Revalidate the immutable release tag before mutation
+        if: steps.winget-pr.outputs.state == 'missing'
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        working-directory: source
+        run: >-
+          bash tools/release/assert-release-tag.sh --tag "$RELEASE_TAG"
+          --expected-commit "$RELEASE_COMMIT"
+      - name: Submit the exact stable manifests
+        if: steps.winget-pr.outputs.state == 'missing'
+        id: submit-winget
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          $submissionOutput = @(.\wingetcreate.exe submit `
+            --prtitle "DotNetJq ${{ needs.validate.outputs.version }}" `
+            --no-open `
+            artifacts/winget 2>&1)
+          $submissionExitCode = $LASTEXITCODE
+          $submissionOutput | Write-Output
+          if ($submissionExitCode -ne 0) {
+            throw "WingetCreate exited with status $submissionExitCode"
+          }
+          $numbers = @(
+            [regex]::Matches(
+              ($submissionOutput -join "`n"),
+              'https://github\.com/microsoft/winget-pkgs/pull/([1-9][0-9]*)'
+            ) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+          )
+          if ($numbers.Count -ne 1) {
+            throw 'WingetCreate did not report exactly one WinGet pull-request URL.'
+          }
+          "pull_request_number=$($numbers[0])" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Verify the submitted WinGet pull request by its exact identity
+        if: steps.winget-pr.outputs.state == 'missing'
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          $verified = $false
+          foreach ($attempt in 1..12) {
+            python source/tools/release/probe-winget-pull-request.py `
+              --package-id "$env:WINGET_PACKAGE_ID" `
+              --version '${{ needs.validate.outputs.version }}' `
+              --manifests artifacts/winget `
+              --pr-title 'DotNetJq ${{ needs.validate.outputs.version }}' `
+              --pull-request-number '${{ steps.submit-winget.outputs.pull_request_number }}'
+            if ($LASTEXITCODE -eq 0) {
+              $verified = $true
+              break
+            }
+            if ($attempt -lt 12) { Start-Sleep -Seconds 5 }
+          }
+          if (-not $verified) {
+            throw 'Submitted WinGet pull request did not become exactly verifiable.'
+          }
+      - name: Report the already verified WinGet pull request
+        if: steps.winget-pr.outputs.state == 'exact-existing'
+        shell: pwsh
+        run: >-
+          Write-Host
+          'Exact WinGet submission already exists:'
+          '${{ steps.winget-pr.outputs.pull_request_url }}'
+      - name: Report the already published WinGet version
+        if: steps.winget-pr.outputs.state == 'exact-published'
+        shell: pwsh
+        run: >-
+          Write-Host
+          'Exact WinGet manifests are already published; no submission is needed.'

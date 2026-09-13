@@ -42,6 +42,13 @@ whose version matches the source declaration starts the release workflow. It:
 6. for stable versions only, opens a Homebrew tap pull request and submits
    WinGet manifests.
 
+When only a downstream Homebrew or WinGet submission must be retried, the
+manual **Publish an immutable release to package managers** workflow accepts an
+existing stable tag. It re-downloads and fully verifies the immutable 27-asset
+release against that tag, rejects a prerelease or superseded version, and then
+uses the same protected environment and downgrade-safe package-manager checks.
+It cannot republish NuGet, alter the GitHub release, or move the tag.
+
 Release candidates are GitHub prereleases and NuGet prerelease packages. They
 do not update stable Homebrew or WinGet channels.
 

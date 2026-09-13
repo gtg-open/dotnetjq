@@ -8,6 +8,9 @@ workflow="$release_repository_root/.github/workflows/release-cli.yml"
 semantic_workflow="$release_repository_root/.github/workflows/semantic-compatibility.yml"
 [ -f "$semantic_workflow" ] ||
   release_die "semantic workflow is missing: $semantic_workflow"
+package_manager_workflow="$release_repository_root/.github/workflows/package-manager-publication.yml"
+[ -f "$package_manager_workflow" ] ||
+  release_die "package-manager recovery workflow is missing: $package_manager_workflow"
 release_require_command awk
 release_require_command grep
 
@@ -321,6 +324,9 @@ job_contains "$core_publish_job" "steps.optional-publishers.outputs.homebrew_con
   release_die 'Homebrew credentials must be validated only when fully configured'
 job_contains "$core_publish_job" "steps.optional-publishers.outputs.winget_configured == 'true'" ||
   release_die 'WinGet credentials must be validated only when configured'
+if grep -Fq 'repository.get("permissions", {}).get("push")' "$workflow"; then
+  release_die 'GitHub App permissions must be validated by token issuance, not a user-role field'
+fi
 if [ "$core_publish_job" = publish-core ]; then
   job_contains_in_order publish-core 'tools/release/publish-nuget-plan.sh' 'draft: false' ||
     release_die 'the merged core publication job must publish NuGet before making the GitHub release public'
@@ -462,4 +468,37 @@ job_contains "$core_publish_job" 'sudo apt-get install --yes file ruby unzip' ||
 grep -Fq 'binutils bubblewrap clang gcc perl ripgrep ruby unzip zip zlib1g-dev' "$semantic_workflow" ||
   release_die 'semantic validation must install Ruby for canonical WinGet YAML integration tests'
 
-printf 'release workflow static tests passed (108/108)\n'
+primary_workflow=$workflow
+workflow=$package_manager_workflow
+grep -Fq 'workflow_dispatch:' "$workflow" ||
+  release_die 'package-manager recovery must require an explicit manual dispatch'
+grep -Fq 'group: dotnetjq-release-publication' "$workflow" ||
+  release_die 'package-manager recovery must serialize with tag-driven publication'
+[ "$(grep -Fc 'environment: release' "$workflow")" -eq 2 ] ||
+  release_die 'both recovery mutations must use the protected release environment'
+job_contains validate '--download-to artifacts/bundle' ||
+  release_die 'package-manager recovery must download the exact immutable release assets'
+job_contains validate 'source/tools/release/verify-release-bundle.sh' ||
+  release_die 'package-manager recovery must fully reverify the downloaded release bundle'
+job_contains validate 'source/tools/release/probe-github-release.py' ||
+  release_die 'package-manager recovery must classify the exact published release'
+job_contains validate 'test "$SUPERSEDED" = false' ||
+  release_die 'package-manager recovery must reject an older superseded stable release'
+job_contains homebrew 'permission-contents: write' ||
+  release_die 'Homebrew recovery token must request Contents write'
+job_contains homebrew 'permission-pull-requests: write' ||
+  release_die 'Homebrew recovery token must request Pull requests write'
+job_contains_in_order homebrew 'classify-homebrew-formula.py' 'create-pull-request@' ||
+  release_die 'Homebrew recovery must classify before opening a pull request'
+job_contains winget 'scopes != {"public_repo"}' ||
+  release_die 'WinGet recovery must reject every scope set except public_repo'
+job_contains_in_order winget 'probe-winget-pull-request.py' 'wingetcreate.exe submit' ||
+  release_die 'WinGet recovery must classify before submitting manifests'
+if grep -En '(^|[[:space:]])gh[[:space:]]' "$workflow"; then
+  release_die 'package-manager recovery workflow must not invoke an ambient GitHub CLI'
+elif [ "$?" -ne 1 ]; then
+  release_die 'could not scan package-manager recovery for ambient GitHub CLI calls'
+fi
+workflow=$primary_workflow
+
+printf 'release workflow static tests passed\n'

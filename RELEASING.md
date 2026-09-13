@@ -112,6 +112,26 @@ create a partially distributed stable release. The Homebrew formula becomes
 installable after its PR is reviewed and merged. Prerelease tags publish only
 GitHub prerelease assets and NuGet prerelease packages.
 
+## Retry only Homebrew and WinGet
+
+If the stable GitHub release and NuGet packages are already published but a
+downstream package-manager submission was deferred or failed, run **Publish an
+immutable release to package managers** from the Actions page and enter the
+existing tag, such as `v1.0.0`. This manual recovery path does not rebuild the
+product, publish NuGet packages, modify the GitHub release, or move the tag. It
+downloads all 27 assets from the published immutable release, verifies their
+exact body, inventory, bytes, checksums, package metadata, source archive, and
+relink evidence against the tagged source, and rejects prereleases or a stable
+release superseded by a newer version. Only then does the protected `release`
+environment expose the Homebrew and WinGet credentials.
+
+The recovery run is serialized with the tag-driven release workflow. Homebrew
+token creation explicitly requests Contents and Pull requests write access for
+the configured tap; GitHub rejects token creation if the app installation does
+not grant those permissions. The tap is still changed only through a reviewable
+pull request. WinGet retains its exact-token-identity and `public_repo`-only
+scope checks and verifies the submitted pull request byte-for-byte.
+
 Never move a published tag, replace an asset, or reuse a package version. A
 retry preflights all ten exact NuGet ID/version pairs. It skips a present package
 only after verifying its NuGet.org repository signature is owned by `gtg-open`,

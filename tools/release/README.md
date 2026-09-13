@@ -358,6 +358,14 @@ identities, URLs, archive hashes, and installer structure. This test runs in the
 full semantic gate on GitHub, with Ruby explicitly installed; no jq library or
 CLI execution behavior is changed.
 
+`verify-github-release-assets.py` can also populate a new output directory with
+all 27 assets from an exact published immutable release. It validates release
+metadata and every API asset URL before downloading, never overwrites an
+existing path, strips authorization on cross-origin HTTPS asset redirects, and
+then verifies the downloaded inventory and bytes. The protected manual
+package-manager workflow uses this mode before running the complete tagged
+bundle verifier and the downgrade-safe Homebrew and WinGet classifiers.
+
 ## Source and release validation
 
 The distributable `dotnetjq-aot-source-VERSION.tar.gz` is built by
